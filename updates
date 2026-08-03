@@ -1,0 +1,199 @@
+# Project Status — Blockchain-Enabled Framework for Misinformation Monitoring
+
+**Purpose:** A blockchain-enabled framework for misinformation monitoring in
+Sepedi/isiZulu/English — multilingual transformer models (AI/NLP layer) with a
+permissioned Hyperledger Fabric audit layer that lets multiple fact-checking
+organisations share reports and vote on their legitimacy (consortium review).
+Group project (Honours, University of Pretoria).
+
+---
+
+## 1. Repository structure (current)
+
+```
+A_Blockchain_Enabled_Framework_for_Misinformation_Monitoring/
+├── .gitignore
+├── updates                         # this status tracker
+├── rs_prop.pdf                     # proposal (implementation notes are outdated)
+├── apps/ai_service/v1-0-0/
+│   ├── app/src/
+│   │   ├── blockchain.py           # C1: Python -> chaincode bridge (peer CLI)
+│   │   ├── data_parser.py          # parses GPT-4o-mini translations
+│   │   ├── data_prep.py            # dataset prep (dup resolution upstream)
+│   │   ├── preprocessing.py        # anonymize_text() etc.
+│   │   └── colab_pipeline.py       # Colab/Kaggle runner
+│   └── data/raw/                   # ~1.8G dataset (gitignored) — DO NOT delete
+└── blockchain/
+    ├── explanation                 # pipeline explainer + step-by-step + troubleshooting
+    ├── scripts/
+    │   ├── deploy.sh               # 2-org network up/down + chaincode deploy
+    │   ├── onboard-org3.sh         # add 3rd org + 2/3 endorsement policy
+    │   └── smoke-test.sh           # CLI: register -> submit -> vote -> finalize -> query
+    └── chaincode/misinformation/
+        ├── DATA_MODEL.md           # B1 decision record (fields, keys, quorum)
+        ├── README.md
+        ├── DEPLOYMENT.md           # C2 Colab/Kaggle packaging notes
+        └── go/                     # misinformation.go + unit tests (mock stub)
+```
+
+Deleted from the old balance-transfer/fabcar tutorial (cleanup): `api-1.4/`,
+`api-2.0/`, `app/`, `app.js`, `artifacts/`, `explorer/`, old lifecycle scripts,
+transcript `.tx` files, `log.txt`, `fabcar.tar.gz`, stale channel-artifacts.
+The MSP/TLS crypto material is generated at runtime by `network.sh` into
+`~/fabric-samples/test-network/organizations/` and is never committed.
+
+---
+
+## 2. AI/NLP layer (status)
+
+- GPT-4o-mini translation of the ~102k-row dataset (English→Sepedi, forward+back)
+  — **done**, parsed via `data_parser.py`.
+- English baseline fine-tune of AfroXLMR-large — **done but not reportable**
+  (test set leaked into eval during training). Fix identified: separate
+  `training.ipynb` (train/val only) + `final_evaluation.ipynb` (test set, single
+  `trainer.evaluate()` call).
+- `anonymize_text()` built/tested (mentions, permalinks, photo credits) — O(n²)
+  bug fixed. Outstanding: mojibake cleanup, URL pattern gaps, confirm anonymization
+  ran on Sepedi translated columns.
+- Outstanding: Sepedi fine-tune re-run, isiZulu pipeline, WER stratified
+  comparison, final clean eval runs.
+
+**Key learnings:** test-set integrity is non-negotiable; JSON over numbered lists
+for batch LLM output; pandas rename atomicity; vectorize instead of looping.
+
+---
+
+## 3. Blockchain layer (Track B + C — functionally complete)
+
+**Architecture:** Hyperledger Fabric v2.5.16, Raft consensus, LevelDB,
+`fabric-samples/test-network`. Chaincode `misinformation` v1.1, `contractapi`
+style (Go, not `shim`). REST layer deliberately deferred (B5) — CLI + Python
+bridge only.
+
+**Data model (`DATA_MODEL.md`):** on-chain fields `row_id, language,
+content_hash (sha256, never raw text), proposed_label ("0"/"1"), confidence
+[0,1], model_version, timestamp (RFC3339 UTC), submitted_by (MSP), status,
+votes[], finalized_by, finalized_at`. Composite keys: `pred:{language}:{row_id}`
+(reports), `org:{mspid}` (stakeholder orgs), `vote:{language}:{row_id}:{mspid}`
+(one vote per org per report).
+
+**Consortium review workflow:**
+`RegisterOrg` → `SubmitReport` (PENDING) → `CastVote` (accept/reject, one per
+org) → `FinalizeReport` once **≥ 2/3 of registered orgs** have voted → `FINAL`
+if quorum accepted else `REJECTED`. After finalisation the record is immutable
+and votes are closed. Quorum = ceil(2×N/3): 2 orgs→2, 3 orgs→2, 4 orgs→3.
+
+**Functions:** `RegisterOrg`, `ListRegisteredOrgs`, `SubmitReport`, `CastVote`,
+`FinalizeReport`, `QueryReport`, `QueryAllReports`, `GetReportCount`,
+`QueryVotes`, `QueryReportHistory`, `ComputeContentHash`.
+
+**Track status:** B1–B6 DONE (data model, contractapi style, functions,
+topology, REST deferred, lifecycle tested live). C1–C3 DONE (Python bridge,
+Colab/Kaggle packaging, write-up alignment). Org3 robustness test DONE
+(`onboard-org3.sh`, 2-of-3 endorsement verified: 2 endorsers OK, 1 endorser
+rejected; 3-org vote→finalize verified live).
+
+---
+
+## 4. How to deploy
+
+Prereqs: Docker running, Go 1.22+, Fabric binaries on `~/fabric-samples/bin`
+PATH, `jq` on PATH (or `~/.local/bin/jq`), Python 3.10+ for the bridge.
+
+### 4.1 Two-org baseline (AND endorsement)
+
+```bash
+cd blockchain
+./scripts/deploy.sh          # up + createChannel + deployCC (v1.1)
+./scripts/smoke-test.sh      # CLI: register -> submit -> vote -> finalize -> query
+```
+
+`deploy.sh down` tears everything down. If `peer channel join` fails with
+"ledger [mychannel] already exists" on redeploy → stale Docker volumes (see §5).
+
+### 4.2 Add a 3rd stakeholder org (2/3 endorsement) — robustness test
+
+```bash
+# 1. network must be up (4.1). Start the org3 peer and join it to the channel:
+~/fabric-samples/test-network/addOrg3/addOrg3.sh up
+
+# 2. install + approve chaincode on all 3 orgs, commit with 2-of-3 policy:
+cd blockchain
+./scripts/onboard-org3.sh
+
+# 3. verify: register org3 on-chain, then run a 3-org vote via the bridge:
+cd apps/ai_service/v1-0-0/app/src
+python3 - <<'EOF'
+from blockchain import FabricBridge
+b1 = FabricBridge(org="org1", endorsers=["org1","org3"])
+b2 = FabricBridge(org="org2", endorsers=["org1","org2"])
+b3 = FabricBridge(org="org3", endorsers=["org2","org3"])
+b3.register_org()
+b1.submit_report("demo-1","nso","f"*64,"1",0.95,"v1.0","2025-01-01T00:00:00Z")
+b1.cast_vote("nso","demo-1","accept")
+b2.cast_vote("nso","demo-1","accept")
+b3.finalize_report("nso","demo-1")
+print(b1.query_report("nso","demo-1"))
+EOF
+```
+
+After 4.2 the endorsement policy is `OutOf(2, Org1MSP, Org2MSP, Org3MSP)` —
+an invoke endorsed by only 1 org is rejected.
+
+### 4.3 Python bridge quick reference
+
+`apps/ai_service/v1-0-0/app/src/blockchain.py`:
+`FabricBridge(org="org1"|"org2"|"org3", endorsers=["org1","org2"])` +
+`register_org`, `list_orgs`, `submit_report`, `cast_vote`, `finalize_report`,
+`query_report`, `query_all`, `count`, `votes`, `history`,
+`submit_pipeline_output(rows, language, model_version, bridge)`,
+`Prediction.hash_content(text)`.
+
+### 4.4 Unit tests (no network needed)
+
+```bash
+cd blockchain/chaincode/misinformation/go
+go test ./...      # registration, submit/query, validation, vote->finalize, quorum, rejection, count/all
+```
+
+---
+
+## 5. Troubleshooting
+
+- **`peer channel join` fails: "ledger [mychannel] already exists with state
+  [ACTIVE]"** on redeploy → old Docker volumes survived `down`.
+  ```bash
+  ./scripts/deploy.sh down
+  docker volume rm compose_orderer.example.com \
+    compose_peer0.org1.example.com compose_peer0.org2.example.com
+  ./scripts/deploy.sh
+  ```
+  (or `docker volume prune` for all unused volumes).
+- **"org X is not a registered stakeholder; call RegisterOrg first"** → the org
+  hasn't enrolled on-chain yet; run `RegisterOrg` (bridge `register_org()` or
+  CLI) before submitting/voting.
+- **"only N of M registered orgs have voted; X votes required for 2/3 quorum"**
+  → not enough votes yet; have remaining orgs `CastVote`, then finalize again.
+- **"verdict must be accept or reject"** → vote value typo.
+- **"org X already voted"** → one vote per org per report is enforced.
+- **Invoke fails after `onboard-org3.sh` with endorsement error** → the 2/3
+  policy needs ≥ 2 of the 3 peers; your bridge must list ≥ 2 endorsers
+  (`endorsers=["org1","org3"]`, etc.), not a single peer.
+- **"peer command failed"** → network isn't up; re-run §4.1.
+- **`jq: command not found`** → install jq (e.g. `jq-linux-amd64` →
+  `~/.local/bin/jq`); `deploy.sh` picks it up automatically.
+- **`addOrg3.sh up` fails** → the network must be up first (run §4.1), and
+  `jq` must be on PATH.
+- **`docker volume rm` permission errors** → stop the network first
+  (`./scripts/deploy.sh down`).
+
+---
+
+## 6. Next actionable steps
+
+1. AI/NLP: Sepedi fine-tune re-run (leak-free split), then isiZulu pipeline,
+   WER stratified comparison, final clean eval runs.
+2. Demo: wire `submit_pipeline_output` into the eval notebook to anchor real
+   predictions, then show the vote→finalize flow with all registered orgs.
+3. Optional for dissertation depth: richer chaincode queries (by label /
+   language), or a 4th org to demonstrate quorum scaling (2/3 rule is dynamic).

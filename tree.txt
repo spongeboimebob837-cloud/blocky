@@ -1,0 +1,1128 @@
+.
+├── README.md
+├── apps
+│   └── ai_service
+│       └── v1-0-0
+│           ├── app
+│           │   ├── model
+│           │   ├── pipeline
+│           │   └── src
+│           │       ├── __init__.py
+│           │       ├── __pycache__
+│           │       │   └── blockchain.cpython-312.pyc
+│           │       ├── blockchain.py
+│           │       ├── colab_pipeline.py
+│           │       ├── data_parser.py
+│           │       ├── data_prep.py
+│           │       ├── fine_tuning_test.ipynb
+│           │       ├── fine_tuning_training.ipynb
+│           │       ├── fine_tuning_training_temp.ipynb
+│           │       ├── model_config.py
+│           │       ├── notebook_launcher.ipynb
+│           │       └── preprocessing.py
+│           ├── data
+│           │   ├── processed
+│           │   └── raw
+│           │       ├── complete_translations_and_backtranslations.jsonl
+│           │       ├── gpt_40_mini_eng_nso_translations.csv
+│           │       ├── gpt_40_mini_eng_nso_translations.jsonl
+│           │       ├── gpt_40_mini_nso_eng_output.csv
+│           │       ├── gpt_40_mini_nso_eng_output.jsonl
+│           │       ├── twitter_data_eng_raw.csv
+│           │       ├── twitter_data_eng_raw_anon.csv
+│           │       ├── twitter_data_nso_raw.csv
+│           │       └── twitter_data_nso_raw_anon.csv
+│           ├── models
+│           └── requirements.txt
+├── blockchain
+│   ├── chaincode
+│   │   └── misinformation
+│   │       ├── DATA_MODEL.md
+│   │       ├── DEPLOYMENT.md
+│   │       ├── README.md
+│   │       └── go
+│   │           ├── go.mod
+│   │           ├── go.sum
+│   │           ├── misinformation.go
+│   │           ├── misinformation_test.go
+│   │           ├── mockstub_test.go
+│   │           └── vendor
+│   │               ├── github.com
+│   │               │   ├── go-openapi
+│   │               │   │   ├── jsonpointer
+│   │               │   │   │   ├── CODE_OF_CONDUCT.md
+│   │               │   │   │   ├── LICENSE
+│   │               │   │   │   ├── README.md
+│   │               │   │   │   └── pointer.go
+│   │               │   │   ├── jsonreference
+│   │               │   │   │   ├── CODE_OF_CONDUCT.md
+│   │               │   │   │   ├── LICENSE
+│   │               │   │   │   ├── README.md
+│   │               │   │   │   ├── internal
+│   │               │   │   │   │   └── normalize_url.go
+│   │               │   │   │   └── reference.go
+│   │               │   │   ├── spec
+│   │               │   │   │   ├── CODE_OF_CONDUCT.md
+│   │               │   │   │   ├── LICENSE
+│   │               │   │   │   ├── README.md
+│   │               │   │   │   ├── cache.go
+│   │               │   │   │   ├── contact_info.go
+│   │               │   │   │   ├── debug.go
+│   │               │   │   │   ├── embed.go
+│   │               │   │   │   ├── errors.go
+│   │               │   │   │   ├── expander.go
+│   │               │   │   │   ├── external_docs.go
+│   │               │   │   │   ├── header.go
+│   │               │   │   │   ├── info.go
+│   │               │   │   │   ├── items.go
+│   │               │   │   │   ├── license.go
+│   │               │   │   │   ├── normalizer.go
+│   │               │   │   │   ├── normalizer_nonwindows.go
+│   │               │   │   │   ├── normalizer_windows.go
+│   │               │   │   │   ├── operation.go
+│   │               │   │   │   ├── parameter.go
+│   │               │   │   │   ├── path_item.go
+│   │               │   │   │   ├── paths.go
+│   │               │   │   │   ├── properties.go
+│   │               │   │   │   ├── ref.go
+│   │               │   │   │   ├── resolver.go
+│   │               │   │   │   ├── response.go
+│   │               │   │   │   ├── responses.go
+│   │               │   │   │   ├── schema.go
+│   │               │   │   │   ├── schema_loader.go
+│   │               │   │   │   ├── schemas
+│   │               │   │   │   │   ├── jsonschema-draft-04.json
+│   │               │   │   │   │   └── v2
+│   │               │   │   │   │       └── schema.json
+│   │               │   │   │   ├── security_scheme.go
+│   │               │   │   │   ├── spec.go
+│   │               │   │   │   ├── swagger.go
+│   │               │   │   │   ├── tag.go
+│   │               │   │   │   ├── url_go19.go
+│   │               │   │   │   ├── validations.go
+│   │               │   │   │   └── xml_object.go
+│   │               │   │   └── swag
+│   │               │   │       ├── BENCHMARK.md
+│   │               │   │       ├── CODE_OF_CONDUCT.md
+│   │               │   │       ├── LICENSE
+│   │               │   │       ├── README.md
+│   │               │   │       ├── convert.go
+│   │               │   │       ├── convert_types.go
+│   │               │   │       ├── doc.go
+│   │               │   │       ├── file.go
+│   │               │   │       ├── initialism_index.go
+│   │               │   │       ├── json.go
+│   │               │   │       ├── loading.go
+│   │               │   │       ├── name_lexem.go
+│   │               │   │       ├── net.go
+│   │               │   │       ├── path.go
+│   │               │   │       ├── split.go
+│   │               │   │       ├── string_bytes.go
+│   │               │   │       ├── util.go
+│   │               │   │       └── yaml.go
+│   │               │   ├── hyperledger
+│   │               │   │   ├── fabric-chaincode-go
+│   │               │   │   │   └── v2
+│   │               │   │   │       ├── LICENSE
+│   │               │   │   │       ├── pkg
+│   │               │   │   │       │   ├── attrmgr
+│   │               │   │   │       │   │   └── attrmgr.go
+│   │               │   │   │       │   └── cid
+│   │               │   │   │       │       ├── README.md
+│   │               │   │   │       │       ├── cid.go
+│   │               │   │   │       │       └── interfaces.go
+│   │               │   │   │       └── shim
+│   │               │   │   │           ├── chaincodeserver.go
+│   │               │   │   │           ├── handler.go
+│   │               │   │   │           ├── interfaces.go
+│   │               │   │   │           ├── internal
+│   │               │   │   │           │   ├── client.go
+│   │               │   │   │           │   ├── config.go
+│   │               │   │   │           │   └── server.go
+│   │               │   │   │           ├── response.go
+│   │               │   │   │           ├── shim.go
+│   │               │   │   │           └── stub.go
+│   │               │   │   ├── fabric-contract-api-go
+│   │               │   │   │   └── v2
+│   │               │   │   │       ├── LICENSE
+│   │               │   │   │       ├── contractapi
+│   │               │   │   │       │   ├── contract.go
+│   │               │   │   │       │   ├── contract_chaincode.go
+│   │               │   │   │       │   ├── system_contract.go
+│   │               │   │   │       │   ├── transaction_context.go
+│   │               │   │   │       │   └── utils
+│   │               │   │   │       │       └── undefined_interface.go
+│   │               │   │   │       ├── internal
+│   │               │   │   │       │   ├── contract_function.go
+│   │               │   │   │       │   ├── transaction_handler.go
+│   │               │   │   │       │   ├── types
+│   │               │   │   │       │   │   └── types.go
+│   │               │   │   │       │   ├── types_handler.go
+│   │               │   │   │       │   └── utils
+│   │               │   │   │       │       └── utils.go
+│   │               │   │   │       ├── metadata
+│   │               │   │   │       │   ├── ioutils.go
+│   │               │   │   │       │   ├── metadata.go
+│   │               │   │   │       │   ├── schema
+│   │               │   │   │       │   │   └── schema.json
+│   │               │   │   │       │   └── schema.go
+│   │               │   │   │       └── serializer
+│   │               │   │   │           ├── json_transaction_serializer.go
+│   │               │   │   │           └── transaction_serializer.go
+│   │               │   │   └── fabric-protos-go-apiv2
+│   │               │   │       ├── LICENSE
+│   │               │   │       ├── common
+│   │               │   │       │   ├── collection.pb.go
+│   │               │   │       │   ├── common.pb.go
+│   │               │   │       │   ├── configtx.pb.go
+│   │               │   │       │   ├── configuration.pb.go
+│   │               │   │       │   ├── ledger.pb.go
+│   │               │   │       │   └── policies.pb.go
+│   │               │   │       ├── ledger
+│   │               │   │       │   ├── queryresult
+│   │               │   │       │   │   └── kv_query_result.pb.go
+│   │               │   │       │   └── rwset
+│   │               │   │       │       └── rwset.pb.go
+│   │               │   │       ├── msp
+│   │               │   │       │   ├── identities.pb.go
+│   │               │   │       │   ├── msp_config.pb.go
+│   │               │   │       │   └── msp_principal.pb.go
+│   │               │   │       └── peer
+│   │               │   │           ├── chaincode.pb.go
+│   │               │   │           ├── chaincode_event.pb.go
+│   │               │   │           ├── chaincode_shim.pb.go
+│   │               │   │           ├── chaincode_shim_grpc.pb.go
+│   │               │   │           ├── collection.pb.go
+│   │               │   │           ├── configuration.pb.go
+│   │               │   │           ├── events.pb.go
+│   │               │   │           ├── events_grpc.pb.go
+│   │               │   │           ├── peer.pb.go
+│   │               │   │           ├── peer_grpc.pb.go
+│   │               │   │           ├── policy.pb.go
+│   │               │   │           ├── proposal.pb.go
+│   │               │   │           ├── proposal_response.pb.go
+│   │               │   │           ├── query.pb.go
+│   │               │   │           ├── resources.pb.go
+│   │               │   │           ├── signed_cc_dep_spec.pb.go
+│   │               │   │           ├── snapshot.pb.go
+│   │               │   │           ├── snapshot_grpc.pb.go
+│   │               │   │           └── transaction.pb.go
+│   │               │   ├── josharian
+│   │               │   │   └── intern
+│   │               │   │       ├── README.md
+│   │               │   │       ├── intern.go
+│   │               │   │       └── license.md
+│   │               │   ├── mailru
+│   │               │   │   └── easyjson
+│   │               │   │       ├── LICENSE
+│   │               │   │       ├── buffer
+│   │               │   │       │   └── pool.go
+│   │               │   │       ├── jlexer
+│   │               │   │       │   ├── bytestostr.go
+│   │               │   │       │   ├── bytestostr_nounsafe.go
+│   │               │   │       │   ├── error.go
+│   │               │   │       │   └── lexer.go
+│   │               │   │       └── jwriter
+│   │               │   │           └── writer.go
+│   │               │   └── xeipuuv
+│   │               │       ├── gojsonpointer
+│   │               │       │   ├── LICENSE-APACHE-2.0.txt
+│   │               │       │   ├── README.md
+│   │               │       │   └── pointer.go
+│   │               │       ├── gojsonreference
+│   │               │       │   ├── LICENSE-APACHE-2.0.txt
+│   │               │       │   ├── README.md
+│   │               │       │   └── reference.go
+│   │               │       └── gojsonschema
+│   │               │           ├── LICENSE-APACHE-2.0.txt
+│   │               │           ├── README.md
+│   │               │           ├── draft.go
+│   │               │           ├── errors.go
+│   │               │           ├── format_checkers.go
+│   │               │           ├── glide.yaml
+│   │               │           ├── internalLog.go
+│   │               │           ├── jsonContext.go
+│   │               │           ├── jsonLoader.go
+│   │               │           ├── locales.go
+│   │               │           ├── result.go
+│   │               │           ├── schema.go
+│   │               │           ├── schemaLoader.go
+│   │               │           ├── schemaPool.go
+│   │               │           ├── schemaReferencePool.go
+│   │               │           ├── schemaType.go
+│   │               │           ├── subSchema.go
+│   │               │           ├── types.go
+│   │               │           ├── utils.go
+│   │               │           └── validation.go
+│   │               ├── golang.org
+│   │               │   └── x
+│   │               │       ├── net
+│   │               │       │   ├── LICENSE
+│   │               │       │   ├── PATENTS
+│   │               │       │   ├── http
+│   │               │       │   │   └── httpguts
+│   │               │       │   │       ├── guts.go
+│   │               │       │   │       └── httplex.go
+│   │               │       │   ├── http2
+│   │               │       │   │   ├── ascii.go
+│   │               │       │   │   ├── ciphers.go
+│   │               │       │   │   ├── client_conn_pool.go
+│   │               │       │   │   ├── databuffer.go
+│   │               │       │   │   ├── errors.go
+│   │               │       │   │   ├── flow.go
+│   │               │       │   │   ├── frame.go
+│   │               │       │   │   ├── gotrack.go
+│   │               │       │   │   ├── headermap.go
+│   │               │       │   │   ├── hpack
+│   │               │       │   │   │   ├── encode.go
+│   │               │       │   │   │   ├── hpack.go
+│   │               │       │   │   │   ├── huffman.go
+│   │               │       │   │   │   ├── static_table.go
+│   │               │       │   │   │   └── tables.go
+│   │               │       │   │   ├── http2.go
+│   │               │       │   │   ├── pipe.go
+│   │               │       │   │   ├── server.go
+│   │               │       │   │   ├── timer.go
+│   │               │       │   │   ├── transport.go
+│   │               │       │   │   ├── write.go
+│   │               │       │   │   ├── writesched.go
+│   │               │       │   │   ├── writesched_priority.go
+│   │               │       │   │   ├── writesched_random.go
+│   │               │       │   │   └── writesched_roundrobin.go
+│   │               │       │   ├── idna
+│   │               │       │   │   ├── go118.go
+│   │               │       │   │   ├── idna10.0.0.go
+│   │               │       │   │   ├── idna9.0.0.go
+│   │               │       │   │   ├── pre_go118.go
+│   │               │       │   │   ├── punycode.go
+│   │               │       │   │   ├── tables10.0.0.go
+│   │               │       │   │   ├── tables11.0.0.go
+│   │               │       │   │   ├── tables12.0.0.go
+│   │               │       │   │   ├── tables13.0.0.go
+│   │               │       │   │   ├── tables15.0.0.go
+│   │               │       │   │   ├── tables9.0.0.go
+│   │               │       │   │   ├── trie.go
+│   │               │       │   │   ├── trie12.0.0.go
+│   │               │       │   │   ├── trie13.0.0.go
+│   │               │       │   │   └── trieval.go
+│   │               │       │   ├── internal
+│   │               │       │   │   └── timeseries
+│   │               │       │   │       └── timeseries.go
+│   │               │       │   └── trace
+│   │               │       │       ├── events.go
+│   │               │       │       ├── histogram.go
+│   │               │       │       └── trace.go
+│   │               │       ├── sys
+│   │               │       │   ├── LICENSE
+│   │               │       │   ├── PATENTS
+│   │               │       │   ├── unix
+│   │               │       │   │   ├── README.md
+│   │               │       │   │   ├── affinity_linux.go
+│   │               │       │   │   ├── aliases.go
+│   │               │       │   │   ├── asm_aix_ppc64.s
+│   │               │       │   │   ├── asm_bsd_386.s
+│   │               │       │   │   ├── asm_bsd_amd64.s
+│   │               │       │   │   ├── asm_bsd_arm.s
+│   │               │       │   │   ├── asm_bsd_arm64.s
+│   │               │       │   │   ├── asm_bsd_ppc64.s
+│   │               │       │   │   ├── asm_bsd_riscv64.s
+│   │               │       │   │   ├── asm_linux_386.s
+│   │               │       │   │   ├── asm_linux_amd64.s
+│   │               │       │   │   ├── asm_linux_arm.s
+│   │               │       │   │   ├── asm_linux_arm64.s
+│   │               │       │   │   ├── asm_linux_loong64.s
+│   │               │       │   │   ├── asm_linux_mips64x.s
+│   │               │       │   │   ├── asm_linux_mipsx.s
+│   │               │       │   │   ├── asm_linux_ppc64x.s
+│   │               │       │   │   ├── asm_linux_riscv64.s
+│   │               │       │   │   ├── asm_linux_s390x.s
+│   │               │       │   │   ├── asm_openbsd_mips64.s
+│   │               │       │   │   ├── asm_solaris_amd64.s
+│   │               │       │   │   ├── asm_zos_s390x.s
+│   │               │       │   │   ├── bluetooth_linux.go
+│   │               │       │   │   ├── bpxsvc_zos.go
+│   │               │       │   │   ├── bpxsvc_zos.s
+│   │               │       │   │   ├── cap_freebsd.go
+│   │               │       │   │   ├── constants.go
+│   │               │       │   │   ├── dev_aix_ppc.go
+│   │               │       │   │   ├── dev_aix_ppc64.go
+│   │               │       │   │   ├── dev_darwin.go
+│   │               │       │   │   ├── dev_dragonfly.go
+│   │               │       │   │   ├── dev_freebsd.go
+│   │               │       │   │   ├── dev_linux.go
+│   │               │       │   │   ├── dev_netbsd.go
+│   │               │       │   │   ├── dev_openbsd.go
+│   │               │       │   │   ├── dev_zos.go
+│   │               │       │   │   ├── dirent.go
+│   │               │       │   │   ├── endian_big.go
+│   │               │       │   │   ├── endian_little.go
+│   │               │       │   │   ├── env_unix.go
+│   │               │       │   │   ├── fcntl.go
+│   │               │       │   │   ├── fcntl_darwin.go
+│   │               │       │   │   ├── fcntl_linux_32bit.go
+│   │               │       │   │   ├── fdset.go
+│   │               │       │   │   ├── gccgo.go
+│   │               │       │   │   ├── gccgo_c.c
+│   │               │       │   │   ├── gccgo_linux_amd64.go
+│   │               │       │   │   ├── ifreq_linux.go
+│   │               │       │   │   ├── ioctl_linux.go
+│   │               │       │   │   ├── ioctl_signed.go
+│   │               │       │   │   ├── ioctl_unsigned.go
+│   │               │       │   │   ├── ioctl_zos.go
+│   │               │       │   │   ├── mkall.sh
+│   │               │       │   │   ├── mkerrors.sh
+│   │               │       │   │   ├── mmap_nomremap.go
+│   │               │       │   │   ├── mremap.go
+│   │               │       │   │   ├── pagesize_unix.go
+│   │               │       │   │   ├── pledge_openbsd.go
+│   │               │       │   │   ├── ptrace_darwin.go
+│   │               │       │   │   ├── ptrace_ios.go
+│   │               │       │   │   ├── race.go
+│   │               │       │   │   ├── race0.go
+│   │               │       │   │   ├── readdirent_getdents.go
+│   │               │       │   │   ├── readdirent_getdirentries.go
+│   │               │       │   │   ├── sockcmsg_dragonfly.go
+│   │               │       │   │   ├── sockcmsg_linux.go
+│   │               │       │   │   ├── sockcmsg_unix.go
+│   │               │       │   │   ├── sockcmsg_unix_other.go
+│   │               │       │   │   ├── sockcmsg_zos.go
+│   │               │       │   │   ├── symaddr_zos_s390x.s
+│   │               │       │   │   ├── syscall.go
+│   │               │       │   │   ├── syscall_aix.go
+│   │               │       │   │   ├── syscall_aix_ppc.go
+│   │               │       │   │   ├── syscall_aix_ppc64.go
+│   │               │       │   │   ├── syscall_bsd.go
+│   │               │       │   │   ├── syscall_darwin.go
+│   │               │       │   │   ├── syscall_darwin_amd64.go
+│   │               │       │   │   ├── syscall_darwin_arm64.go
+│   │               │       │   │   ├── syscall_darwin_libSystem.go
+│   │               │       │   │   ├── syscall_dragonfly.go
+│   │               │       │   │   ├── syscall_dragonfly_amd64.go
+│   │               │       │   │   ├── syscall_freebsd.go
+│   │               │       │   │   ├── syscall_freebsd_386.go
+│   │               │       │   │   ├── syscall_freebsd_amd64.go
+│   │               │       │   │   ├── syscall_freebsd_arm.go
+│   │               │       │   │   ├── syscall_freebsd_arm64.go
+│   │               │       │   │   ├── syscall_freebsd_riscv64.go
+│   │               │       │   │   ├── syscall_hurd.go
+│   │               │       │   │   ├── syscall_hurd_386.go
+│   │               │       │   │   ├── syscall_illumos.go
+│   │               │       │   │   ├── syscall_linux.go
+│   │               │       │   │   ├── syscall_linux_386.go
+│   │               │       │   │   ├── syscall_linux_alarm.go
+│   │               │       │   │   ├── syscall_linux_amd64.go
+│   │               │       │   │   ├── syscall_linux_amd64_gc.go
+│   │               │       │   │   ├── syscall_linux_arm.go
+│   │               │       │   │   ├── syscall_linux_arm64.go
+│   │               │       │   │   ├── syscall_linux_gc.go
+│   │               │       │   │   ├── syscall_linux_gc_386.go
+│   │               │       │   │   ├── syscall_linux_gc_arm.go
+│   │               │       │   │   ├── syscall_linux_gccgo_386.go
+│   │               │       │   │   ├── syscall_linux_gccgo_arm.go
+│   │               │       │   │   ├── syscall_linux_loong64.go
+│   │               │       │   │   ├── syscall_linux_mips64x.go
+│   │               │       │   │   ├── syscall_linux_mipsx.go
+│   │               │       │   │   ├── syscall_linux_ppc.go
+│   │               │       │   │   ├── syscall_linux_ppc64x.go
+│   │               │       │   │   ├── syscall_linux_riscv64.go
+│   │               │       │   │   ├── syscall_linux_s390x.go
+│   │               │       │   │   ├── syscall_linux_sparc64.go
+│   │               │       │   │   ├── syscall_netbsd.go
+│   │               │       │   │   ├── syscall_netbsd_386.go
+│   │               │       │   │   ├── syscall_netbsd_amd64.go
+│   │               │       │   │   ├── syscall_netbsd_arm.go
+│   │               │       │   │   ├── syscall_netbsd_arm64.go
+│   │               │       │   │   ├── syscall_openbsd.go
+│   │               │       │   │   ├── syscall_openbsd_386.go
+│   │               │       │   │   ├── syscall_openbsd_amd64.go
+│   │               │       │   │   ├── syscall_openbsd_arm.go
+│   │               │       │   │   ├── syscall_openbsd_arm64.go
+│   │               │       │   │   ├── syscall_openbsd_libc.go
+│   │               │       │   │   ├── syscall_openbsd_mips64.go
+│   │               │       │   │   ├── syscall_openbsd_ppc64.go
+│   │               │       │   │   ├── syscall_openbsd_riscv64.go
+│   │               │       │   │   ├── syscall_solaris.go
+│   │               │       │   │   ├── syscall_solaris_amd64.go
+│   │               │       │   │   ├── syscall_unix.go
+│   │               │       │   │   ├── syscall_unix_gc.go
+│   │               │       │   │   ├── syscall_unix_gc_ppc64x.go
+│   │               │       │   │   ├── syscall_zos_s390x.go
+│   │               │       │   │   ├── sysvshm_linux.go
+│   │               │       │   │   ├── sysvshm_unix.go
+│   │               │       │   │   ├── sysvshm_unix_other.go
+│   │               │       │   │   ├── timestruct.go
+│   │               │       │   │   ├── unveil_openbsd.go
+│   │               │       │   │   ├── xattr_bsd.go
+│   │               │       │   │   ├── zerrors_aix_ppc.go
+│   │               │       │   │   ├── zerrors_aix_ppc64.go
+│   │               │       │   │   ├── zerrors_darwin_amd64.go
+│   │               │       │   │   ├── zerrors_darwin_arm64.go
+│   │               │       │   │   ├── zerrors_dragonfly_amd64.go
+│   │               │       │   │   ├── zerrors_freebsd_386.go
+│   │               │       │   │   ├── zerrors_freebsd_amd64.go
+│   │               │       │   │   ├── zerrors_freebsd_arm.go
+│   │               │       │   │   ├── zerrors_freebsd_arm64.go
+│   │               │       │   │   ├── zerrors_freebsd_riscv64.go
+│   │               │       │   │   ├── zerrors_linux.go
+│   │               │       │   │   ├── zerrors_linux_386.go
+│   │               │       │   │   ├── zerrors_linux_amd64.go
+│   │               │       │   │   ├── zerrors_linux_arm.go
+│   │               │       │   │   ├── zerrors_linux_arm64.go
+│   │               │       │   │   ├── zerrors_linux_loong64.go
+│   │               │       │   │   ├── zerrors_linux_mips.go
+│   │               │       │   │   ├── zerrors_linux_mips64.go
+│   │               │       │   │   ├── zerrors_linux_mips64le.go
+│   │               │       │   │   ├── zerrors_linux_mipsle.go
+│   │               │       │   │   ├── zerrors_linux_ppc.go
+│   │               │       │   │   ├── zerrors_linux_ppc64.go
+│   │               │       │   │   ├── zerrors_linux_ppc64le.go
+│   │               │       │   │   ├── zerrors_linux_riscv64.go
+│   │               │       │   │   ├── zerrors_linux_s390x.go
+│   │               │       │   │   ├── zerrors_linux_sparc64.go
+│   │               │       │   │   ├── zerrors_netbsd_386.go
+│   │               │       │   │   ├── zerrors_netbsd_amd64.go
+│   │               │       │   │   ├── zerrors_netbsd_arm.go
+│   │               │       │   │   ├── zerrors_netbsd_arm64.go
+│   │               │       │   │   ├── zerrors_openbsd_386.go
+│   │               │       │   │   ├── zerrors_openbsd_amd64.go
+│   │               │       │   │   ├── zerrors_openbsd_arm.go
+│   │               │       │   │   ├── zerrors_openbsd_arm64.go
+│   │               │       │   │   ├── zerrors_openbsd_mips64.go
+│   │               │       │   │   ├── zerrors_openbsd_ppc64.go
+│   │               │       │   │   ├── zerrors_openbsd_riscv64.go
+│   │               │       │   │   ├── zerrors_solaris_amd64.go
+│   │               │       │   │   ├── zerrors_zos_s390x.go
+│   │               │       │   │   ├── zptrace_armnn_linux.go
+│   │               │       │   │   ├── zptrace_linux_arm64.go
+│   │               │       │   │   ├── zptrace_mipsnn_linux.go
+│   │               │       │   │   ├── zptrace_mipsnnle_linux.go
+│   │               │       │   │   ├── zptrace_x86_linux.go
+│   │               │       │   │   ├── zsymaddr_zos_s390x.s
+│   │               │       │   │   ├── zsyscall_aix_ppc.go
+│   │               │       │   │   ├── zsyscall_aix_ppc64.go
+│   │               │       │   │   ├── zsyscall_aix_ppc64_gc.go
+│   │               │       │   │   ├── zsyscall_aix_ppc64_gccgo.go
+│   │               │       │   │   ├── zsyscall_darwin_amd64.go
+│   │               │       │   │   ├── zsyscall_darwin_amd64.s
+│   │               │       │   │   ├── zsyscall_darwin_arm64.go
+│   │               │       │   │   ├── zsyscall_darwin_arm64.s
+│   │               │       │   │   ├── zsyscall_dragonfly_amd64.go
+│   │               │       │   │   ├── zsyscall_freebsd_386.go
+│   │               │       │   │   ├── zsyscall_freebsd_amd64.go
+│   │               │       │   │   ├── zsyscall_freebsd_arm.go
+│   │               │       │   │   ├── zsyscall_freebsd_arm64.go
+│   │               │       │   │   ├── zsyscall_freebsd_riscv64.go
+│   │               │       │   │   ├── zsyscall_illumos_amd64.go
+│   │               │       │   │   ├── zsyscall_linux.go
+│   │               │       │   │   ├── zsyscall_linux_386.go
+│   │               │       │   │   ├── zsyscall_linux_amd64.go
+│   │               │       │   │   ├── zsyscall_linux_arm.go
+│   │               │       │   │   ├── zsyscall_linux_arm64.go
+│   │               │       │   │   ├── zsyscall_linux_loong64.go
+│   │               │       │   │   ├── zsyscall_linux_mips.go
+│   │               │       │   │   ├── zsyscall_linux_mips64.go
+│   │               │       │   │   ├── zsyscall_linux_mips64le.go
+│   │               │       │   │   ├── zsyscall_linux_mipsle.go
+│   │               │       │   │   ├── zsyscall_linux_ppc.go
+│   │               │       │   │   ├── zsyscall_linux_ppc64.go
+│   │               │       │   │   ├── zsyscall_linux_ppc64le.go
+│   │               │       │   │   ├── zsyscall_linux_riscv64.go
+│   │               │       │   │   ├── zsyscall_linux_s390x.go
+│   │               │       │   │   ├── zsyscall_linux_sparc64.go
+│   │               │       │   │   ├── zsyscall_netbsd_386.go
+│   │               │       │   │   ├── zsyscall_netbsd_amd64.go
+│   │               │       │   │   ├── zsyscall_netbsd_arm.go
+│   │               │       │   │   ├── zsyscall_netbsd_arm64.go
+│   │               │       │   │   ├── zsyscall_openbsd_386.go
+│   │               │       │   │   ├── zsyscall_openbsd_386.s
+│   │               │       │   │   ├── zsyscall_openbsd_amd64.go
+│   │               │       │   │   ├── zsyscall_openbsd_amd64.s
+│   │               │       │   │   ├── zsyscall_openbsd_arm.go
+│   │               │       │   │   ├── zsyscall_openbsd_arm.s
+│   │               │       │   │   ├── zsyscall_openbsd_arm64.go
+│   │               │       │   │   ├── zsyscall_openbsd_arm64.s
+│   │               │       │   │   ├── zsyscall_openbsd_mips64.go
+│   │               │       │   │   ├── zsyscall_openbsd_mips64.s
+│   │               │       │   │   ├── zsyscall_openbsd_ppc64.go
+│   │               │       │   │   ├── zsyscall_openbsd_ppc64.s
+│   │               │       │   │   ├── zsyscall_openbsd_riscv64.go
+│   │               │       │   │   ├── zsyscall_openbsd_riscv64.s
+│   │               │       │   │   ├── zsyscall_solaris_amd64.go
+│   │               │       │   │   ├── zsyscall_zos_s390x.go
+│   │               │       │   │   ├── zsysctl_openbsd_386.go
+│   │               │       │   │   ├── zsysctl_openbsd_amd64.go
+│   │               │       │   │   ├── zsysctl_openbsd_arm.go
+│   │               │       │   │   ├── zsysctl_openbsd_arm64.go
+│   │               │       │   │   ├── zsysctl_openbsd_mips64.go
+│   │               │       │   │   ├── zsysctl_openbsd_ppc64.go
+│   │               │       │   │   ├── zsysctl_openbsd_riscv64.go
+│   │               │       │   │   ├── zsysnum_darwin_amd64.go
+│   │               │       │   │   ├── zsysnum_darwin_arm64.go
+│   │               │       │   │   ├── zsysnum_dragonfly_amd64.go
+│   │               │       │   │   ├── zsysnum_freebsd_386.go
+│   │               │       │   │   ├── zsysnum_freebsd_amd64.go
+│   │               │       │   │   ├── zsysnum_freebsd_arm.go
+│   │               │       │   │   ├── zsysnum_freebsd_arm64.go
+│   │               │       │   │   ├── zsysnum_freebsd_riscv64.go
+│   │               │       │   │   ├── zsysnum_linux_386.go
+│   │               │       │   │   ├── zsysnum_linux_amd64.go
+│   │               │       │   │   ├── zsysnum_linux_arm.go
+│   │               │       │   │   ├── zsysnum_linux_arm64.go
+│   │               │       │   │   ├── zsysnum_linux_loong64.go
+│   │               │       │   │   ├── zsysnum_linux_mips.go
+│   │               │       │   │   ├── zsysnum_linux_mips64.go
+│   │               │       │   │   ├── zsysnum_linux_mips64le.go
+│   │               │       │   │   ├── zsysnum_linux_mipsle.go
+│   │               │       │   │   ├── zsysnum_linux_ppc.go
+│   │               │       │   │   ├── zsysnum_linux_ppc64.go
+│   │               │       │   │   ├── zsysnum_linux_ppc64le.go
+│   │               │       │   │   ├── zsysnum_linux_riscv64.go
+│   │               │       │   │   ├── zsysnum_linux_s390x.go
+│   │               │       │   │   ├── zsysnum_linux_sparc64.go
+│   │               │       │   │   ├── zsysnum_netbsd_386.go
+│   │               │       │   │   ├── zsysnum_netbsd_amd64.go
+│   │               │       │   │   ├── zsysnum_netbsd_arm.go
+│   │               │       │   │   ├── zsysnum_netbsd_arm64.go
+│   │               │       │   │   ├── zsysnum_openbsd_386.go
+│   │               │       │   │   ├── zsysnum_openbsd_amd64.go
+│   │               │       │   │   ├── zsysnum_openbsd_arm.go
+│   │               │       │   │   ├── zsysnum_openbsd_arm64.go
+│   │               │       │   │   ├── zsysnum_openbsd_mips64.go
+│   │               │       │   │   ├── zsysnum_openbsd_ppc64.go
+│   │               │       │   │   ├── zsysnum_openbsd_riscv64.go
+│   │               │       │   │   ├── zsysnum_zos_s390x.go
+│   │               │       │   │   ├── ztypes_aix_ppc.go
+│   │               │       │   │   ├── ztypes_aix_ppc64.go
+│   │               │       │   │   ├── ztypes_darwin_amd64.go
+│   │               │       │   │   ├── ztypes_darwin_arm64.go
+│   │               │       │   │   ├── ztypes_dragonfly_amd64.go
+│   │               │       │   │   ├── ztypes_freebsd_386.go
+│   │               │       │   │   ├── ztypes_freebsd_amd64.go
+│   │               │       │   │   ├── ztypes_freebsd_arm.go
+│   │               │       │   │   ├── ztypes_freebsd_arm64.go
+│   │               │       │   │   ├── ztypes_freebsd_riscv64.go
+│   │               │       │   │   ├── ztypes_linux.go
+│   │               │       │   │   ├── ztypes_linux_386.go
+│   │               │       │   │   ├── ztypes_linux_amd64.go
+│   │               │       │   │   ├── ztypes_linux_arm.go
+│   │               │       │   │   ├── ztypes_linux_arm64.go
+│   │               │       │   │   ├── ztypes_linux_loong64.go
+│   │               │       │   │   ├── ztypes_linux_mips.go
+│   │               │       │   │   ├── ztypes_linux_mips64.go
+│   │               │       │   │   ├── ztypes_linux_mips64le.go
+│   │               │       │   │   ├── ztypes_linux_mipsle.go
+│   │               │       │   │   ├── ztypes_linux_ppc.go
+│   │               │       │   │   ├── ztypes_linux_ppc64.go
+│   │               │       │   │   ├── ztypes_linux_ppc64le.go
+│   │               │       │   │   ├── ztypes_linux_riscv64.go
+│   │               │       │   │   ├── ztypes_linux_s390x.go
+│   │               │       │   │   ├── ztypes_linux_sparc64.go
+│   │               │       │   │   ├── ztypes_netbsd_386.go
+│   │               │       │   │   ├── ztypes_netbsd_amd64.go
+│   │               │       │   │   ├── ztypes_netbsd_arm.go
+│   │               │       │   │   ├── ztypes_netbsd_arm64.go
+│   │               │       │   │   ├── ztypes_openbsd_386.go
+│   │               │       │   │   ├── ztypes_openbsd_amd64.go
+│   │               │       │   │   ├── ztypes_openbsd_arm.go
+│   │               │       │   │   ├── ztypes_openbsd_arm64.go
+│   │               │       │   │   ├── ztypes_openbsd_mips64.go
+│   │               │       │   │   ├── ztypes_openbsd_ppc64.go
+│   │               │       │   │   ├── ztypes_openbsd_riscv64.go
+│   │               │       │   │   ├── ztypes_solaris_amd64.go
+│   │               │       │   │   └── ztypes_zos_s390x.go
+│   │               │       │   └── windows
+│   │               │       │       ├── aliases.go
+│   │               │       │       ├── dll_windows.go
+│   │               │       │       ├── env_windows.go
+│   │               │       │       ├── eventlog.go
+│   │               │       │       ├── exec_windows.go
+│   │               │       │       ├── memory_windows.go
+│   │               │       │       ├── mkerrors.bash
+│   │               │       │       ├── mkknownfolderids.bash
+│   │               │       │       ├── mksyscall.go
+│   │               │       │       ├── race.go
+│   │               │       │       ├── race0.go
+│   │               │       │       ├── security_windows.go
+│   │               │       │       ├── service.go
+│   │               │       │       ├── setupapi_windows.go
+│   │               │       │       ├── str.go
+│   │               │       │       ├── syscall.go
+│   │               │       │       ├── syscall_windows.go
+│   │               │       │       ├── types_windows.go
+│   │               │       │       ├── types_windows_386.go
+│   │               │       │       ├── types_windows_amd64.go
+│   │               │       │       ├── types_windows_arm.go
+│   │               │       │       ├── types_windows_arm64.go
+│   │               │       │       ├── zerrors_windows.go
+│   │               │       │       ├── zknownfolderids_windows.go
+│   │               │       │       └── zsyscall_windows.go
+│   │               │       └── text
+│   │               │           ├── LICENSE
+│   │               │           ├── PATENTS
+│   │               │           ├── secure
+│   │               │           │   └── bidirule
+│   │               │           │       ├── bidirule.go
+│   │               │           │       ├── bidirule10.0.0.go
+│   │               │           │       └── bidirule9.0.0.go
+│   │               │           ├── transform
+│   │               │           │   └── transform.go
+│   │               │           └── unicode
+│   │               │               ├── bidi
+│   │               │               │   ├── bidi.go
+│   │               │               │   ├── bracket.go
+│   │               │               │   ├── core.go
+│   │               │               │   ├── prop.go
+│   │               │               │   ├── tables10.0.0.go
+│   │               │               │   ├── tables11.0.0.go
+│   │               │               │   ├── tables12.0.0.go
+│   │               │               │   ├── tables13.0.0.go
+│   │               │               │   ├── tables15.0.0.go
+│   │               │               │   ├── tables9.0.0.go
+│   │               │               │   └── trieval.go
+│   │               │               └── norm
+│   │               │                   ├── composition.go
+│   │               │                   ├── forminfo.go
+│   │               │                   ├── input.go
+│   │               │                   ├── iter.go
+│   │               │                   ├── normalize.go
+│   │               │                   ├── readwriter.go
+│   │               │                   ├── tables10.0.0.go
+│   │               │                   ├── tables11.0.0.go
+│   │               │                   ├── tables12.0.0.go
+│   │               │                   ├── tables13.0.0.go
+│   │               │                   ├── tables15.0.0.go
+│   │               │                   ├── tables9.0.0.go
+│   │               │                   ├── transform.go
+│   │               │                   └── trie.go
+│   │               ├── google.golang.org
+│   │               │   ├── genproto
+│   │               │   │   └── googleapis
+│   │               │   │       └── rpc
+│   │               │   │           ├── LICENSE
+│   │               │   │           └── status
+│   │               │   │               └── status.pb.go
+│   │               │   ├── grpc
+│   │               │   │   ├── AUTHORS
+│   │               │   │   ├── CODE-OF-CONDUCT.md
+│   │               │   │   ├── CONTRIBUTING.md
+│   │               │   │   ├── GOVERNANCE.md
+│   │               │   │   ├── LICENSE
+│   │               │   │   ├── MAINTAINERS.md
+│   │               │   │   ├── Makefile
+│   │               │   │   ├── NOTICE.txt
+│   │               │   │   ├── README.md
+│   │               │   │   ├── SECURITY.md
+│   │               │   │   ├── attributes
+│   │               │   │   │   └── attributes.go
+│   │               │   │   ├── backoff
+│   │               │   │   │   └── backoff.go
+│   │               │   │   ├── backoff.go
+│   │               │   │   ├── balancer
+│   │               │   │   │   ├── balancer.go
+│   │               │   │   │   ├── base
+│   │               │   │   │   │   ├── balancer.go
+│   │               │   │   │   │   └── base.go
+│   │               │   │   │   ├── conn_state_evaluator.go
+│   │               │   │   │   ├── grpclb
+│   │               │   │   │   │   └── state
+│   │               │   │   │   │       └── state.go
+│   │               │   │   │   ├── pickfirst
+│   │               │   │   │   │   └── pickfirst.go
+│   │               │   │   │   └── roundrobin
+│   │               │   │   │       └── roundrobin.go
+│   │               │   │   ├── balancer_wrapper.go
+│   │               │   │   ├── binarylog
+│   │               │   │   │   └── grpc_binarylog_v1
+│   │               │   │   │       └── binarylog.pb.go
+│   │               │   │   ├── call.go
+│   │               │   │   ├── channelz
+│   │               │   │   │   └── channelz.go
+│   │               │   │   ├── clientconn.go
+│   │               │   │   ├── codec.go
+│   │               │   │   ├── codes
+│   │               │   │   │   ├── code_string.go
+│   │               │   │   │   └── codes.go
+│   │               │   │   ├── connectivity
+│   │               │   │   │   └── connectivity.go
+│   │               │   │   ├── credentials
+│   │               │   │   │   ├── credentials.go
+│   │               │   │   │   ├── insecure
+│   │               │   │   │   │   └── insecure.go
+│   │               │   │   │   └── tls.go
+│   │               │   │   ├── dialoptions.go
+│   │               │   │   ├── doc.go
+│   │               │   │   ├── encoding
+│   │               │   │   │   ├── encoding.go
+│   │               │   │   │   ├── encoding_v2.go
+│   │               │   │   │   └── proto
+│   │               │   │   │       └── proto.go
+│   │               │   │   ├── experimental
+│   │               │   │   │   └── stats
+│   │               │   │   │       ├── metricregistry.go
+│   │               │   │   │       └── metrics.go
+│   │               │   │   ├── grpclog
+│   │               │   │   │   ├── component.go
+│   │               │   │   │   ├── grpclog.go
+│   │               │   │   │   ├── internal
+│   │               │   │   │   │   ├── grpclog.go
+│   │               │   │   │   │   ├── logger.go
+│   │               │   │   │   │   └── loggerv2.go
+│   │               │   │   │   ├── logger.go
+│   │               │   │   │   └── loggerv2.go
+│   │               │   │   ├── interceptor.go
+│   │               │   │   ├── internal
+│   │               │   │   │   ├── backoff
+│   │               │   │   │   │   └── backoff.go
+│   │               │   │   │   ├── balancer
+│   │               │   │   │   │   └── gracefulswitch
+│   │               │   │   │   │       ├── config.go
+│   │               │   │   │   │       └── gracefulswitch.go
+│   │               │   │   │   ├── balancerload
+│   │               │   │   │   │   └── load.go
+│   │               │   │   │   ├── binarylog
+│   │               │   │   │   │   ├── binarylog.go
+│   │               │   │   │   │   ├── binarylog_testutil.go
+│   │               │   │   │   │   ├── env_config.go
+│   │               │   │   │   │   ├── method_logger.go
+│   │               │   │   │   │   └── sink.go
+│   │               │   │   │   ├── buffer
+│   │               │   │   │   │   └── unbounded.go
+│   │               │   │   │   ├── channelz
+│   │               │   │   │   │   ├── channel.go
+│   │               │   │   │   │   ├── channelmap.go
+│   │               │   │   │   │   ├── funcs.go
+│   │               │   │   │   │   ├── logging.go
+│   │               │   │   │   │   ├── server.go
+│   │               │   │   │   │   ├── socket.go
+│   │               │   │   │   │   ├── subchannel.go
+│   │               │   │   │   │   ├── syscall_linux.go
+│   │               │   │   │   │   ├── syscall_nonlinux.go
+│   │               │   │   │   │   └── trace.go
+│   │               │   │   │   ├── credentials
+│   │               │   │   │   │   ├── credentials.go
+│   │               │   │   │   │   ├── spiffe.go
+│   │               │   │   │   │   ├── syscallconn.go
+│   │               │   │   │   │   └── util.go
+│   │               │   │   │   ├── envconfig
+│   │               │   │   │   │   ├── envconfig.go
+│   │               │   │   │   │   ├── observability.go
+│   │               │   │   │   │   └── xds.go
+│   │               │   │   │   ├── experimental.go
+│   │               │   │   │   ├── grpclog
+│   │               │   │   │   │   └── prefix_logger.go
+│   │               │   │   │   ├── grpcsync
+│   │               │   │   │   │   ├── callback_serializer.go
+│   │               │   │   │   │   ├── event.go
+│   │               │   │   │   │   ├── oncefunc.go
+│   │               │   │   │   │   └── pubsub.go
+│   │               │   │   │   ├── grpcutil
+│   │               │   │   │   │   ├── compressor.go
+│   │               │   │   │   │   ├── encode_duration.go
+│   │               │   │   │   │   ├── grpcutil.go
+│   │               │   │   │   │   ├── metadata.go
+│   │               │   │   │   │   ├── method.go
+│   │               │   │   │   │   └── regex.go
+│   │               │   │   │   ├── idle
+│   │               │   │   │   │   └── idle.go
+│   │               │   │   │   ├── internal.go
+│   │               │   │   │   ├── metadata
+│   │               │   │   │   │   └── metadata.go
+│   │               │   │   │   ├── pretty
+│   │               │   │   │   │   └── pretty.go
+│   │               │   │   │   ├── resolver
+│   │               │   │   │   │   ├── config_selector.go
+│   │               │   │   │   │   ├── dns
+│   │               │   │   │   │   │   ├── dns_resolver.go
+│   │               │   │   │   │   │   └── internal
+│   │               │   │   │   │   │       └── internal.go
+│   │               │   │   │   │   ├── passthrough
+│   │               │   │   │   │   │   └── passthrough.go
+│   │               │   │   │   │   └── unix
+│   │               │   │   │   │       └── unix.go
+│   │               │   │   │   ├── serviceconfig
+│   │               │   │   │   │   ├── duration.go
+│   │               │   │   │   │   └── serviceconfig.go
+│   │               │   │   │   ├── stats
+│   │               │   │   │   │   ├── labels.go
+│   │               │   │   │   │   └── metrics_recorder_list.go
+│   │               │   │   │   ├── status
+│   │               │   │   │   │   └── status.go
+│   │               │   │   │   ├── syscall
+│   │               │   │   │   │   ├── syscall_linux.go
+│   │               │   │   │   │   └── syscall_nonlinux.go
+│   │               │   │   │   ├── tcp_keepalive_others.go
+│   │               │   │   │   ├── tcp_keepalive_unix.go
+│   │               │   │   │   ├── tcp_keepalive_windows.go
+│   │               │   │   │   └── transport
+│   │               │   │   │       ├── bdp_estimator.go
+│   │               │   │   │       ├── controlbuf.go
+│   │               │   │   │       ├── defaults.go
+│   │               │   │   │       ├── flowcontrol.go
+│   │               │   │   │       ├── handler_server.go
+│   │               │   │   │       ├── http2_client.go
+│   │               │   │   │       ├── http2_server.go
+│   │               │   │   │       ├── http_util.go
+│   │               │   │   │       ├── logging.go
+│   │               │   │   │       ├── networktype
+│   │               │   │   │       │   └── networktype.go
+│   │               │   │   │       ├── proxy.go
+│   │               │   │   │       └── transport.go
+│   │               │   │   ├── keepalive
+│   │               │   │   │   └── keepalive.go
+│   │               │   │   ├── mem
+│   │               │   │   │   ├── buffer_pool.go
+│   │               │   │   │   ├── buffer_slice.go
+│   │               │   │   │   └── buffers.go
+│   │               │   │   ├── metadata
+│   │               │   │   │   └── metadata.go
+│   │               │   │   ├── peer
+│   │               │   │   │   └── peer.go
+│   │               │   │   ├── picker_wrapper.go
+│   │               │   │   ├── preloader.go
+│   │               │   │   ├── resolver
+│   │               │   │   │   ├── dns
+│   │               │   │   │   │   └── dns_resolver.go
+│   │               │   │   │   ├── map.go
+│   │               │   │   │   └── resolver.go
+│   │               │   │   ├── resolver_wrapper.go
+│   │               │   │   ├── rpc_util.go
+│   │               │   │   ├── server.go
+│   │               │   │   ├── service_config.go
+│   │               │   │   ├── serviceconfig
+│   │               │   │   │   └── serviceconfig.go
+│   │               │   │   ├── stats
+│   │               │   │   │   ├── handlers.go
+│   │               │   │   │   └── stats.go
+│   │               │   │   ├── status
+│   │               │   │   │   └── status.go
+│   │               │   │   ├── stream.go
+│   │               │   │   ├── stream_interfaces.go
+│   │               │   │   ├── tap
+│   │               │   │   │   └── tap.go
+│   │               │   │   ├── trace.go
+│   │               │   │   ├── trace_notrace.go
+│   │               │   │   ├── trace_withtrace.go
+│   │               │   │   └── version.go
+│   │               │   └── protobuf
+│   │               │       ├── LICENSE
+│   │               │       ├── PATENTS
+│   │               │       ├── encoding
+│   │               │       │   ├── protojson
+│   │               │       │   │   ├── decode.go
+│   │               │       │   │   ├── doc.go
+│   │               │       │   │   ├── encode.go
+│   │               │       │   │   └── well_known_types.go
+│   │               │       │   ├── prototext
+│   │               │       │   │   ├── decode.go
+│   │               │       │   │   ├── doc.go
+│   │               │       │   │   └── encode.go
+│   │               │       │   └── protowire
+│   │               │       │       └── wire.go
+│   │               │       ├── internal
+│   │               │       │   ├── descfmt
+│   │               │       │   │   └── stringer.go
+│   │               │       │   ├── descopts
+│   │               │       │   │   └── options.go
+│   │               │       │   ├── detrand
+│   │               │       │   │   └── rand.go
+│   │               │       │   ├── editiondefaults
+│   │               │       │   │   ├── defaults.go
+│   │               │       │   │   └── editions_defaults.binpb
+│   │               │       │   ├── encoding
+│   │               │       │   │   ├── defval
+│   │               │       │   │   │   └── default.go
+│   │               │       │   │   ├── json
+│   │               │       │   │   │   ├── decode.go
+│   │               │       │   │   │   ├── decode_number.go
+│   │               │       │   │   │   ├── decode_string.go
+│   │               │       │   │   │   ├── decode_token.go
+│   │               │       │   │   │   └── encode.go
+│   │               │       │   │   ├── messageset
+│   │               │       │   │   │   └── messageset.go
+│   │               │       │   │   ├── tag
+│   │               │       │   │   │   └── tag.go
+│   │               │       │   │   └── text
+│   │               │       │   │       ├── decode.go
+│   │               │       │   │       ├── decode_number.go
+│   │               │       │   │       ├── decode_string.go
+│   │               │       │   │       ├── decode_token.go
+│   │               │       │   │       ├── doc.go
+│   │               │       │   │       └── encode.go
+│   │               │       │   ├── errors
+│   │               │       │   │   └── errors.go
+│   │               │       │   ├── filedesc
+│   │               │       │   │   ├── build.go
+│   │               │       │   │   ├── desc.go
+│   │               │       │   │   ├── desc_init.go
+│   │               │       │   │   ├── desc_lazy.go
+│   │               │       │   │   ├── desc_list.go
+│   │               │       │   │   ├── desc_list_gen.go
+│   │               │       │   │   ├── editions.go
+│   │               │       │   │   └── placeholder.go
+│   │               │       │   ├── filetype
+│   │               │       │   │   └── build.go
+│   │               │       │   ├── flags
+│   │               │       │   │   ├── flags.go
+│   │               │       │   │   ├── proto_legacy_disable.go
+│   │               │       │   │   └── proto_legacy_enable.go
+│   │               │       │   ├── genid
+│   │               │       │   │   ├── any_gen.go
+│   │               │       │   │   ├── api_gen.go
+│   │               │       │   │   ├── descriptor_gen.go
+│   │               │       │   │   ├── doc.go
+│   │               │       │   │   ├── duration_gen.go
+│   │               │       │   │   ├── empty_gen.go
+│   │               │       │   │   ├── field_mask_gen.go
+│   │               │       │   │   ├── go_features_gen.go
+│   │               │       │   │   ├── goname.go
+│   │               │       │   │   ├── map_entry.go
+│   │               │       │   │   ├── name.go
+│   │               │       │   │   ├── source_context_gen.go
+│   │               │       │   │   ├── struct_gen.go
+│   │               │       │   │   ├── timestamp_gen.go
+│   │               │       │   │   ├── type_gen.go
+│   │               │       │   │   ├── wrappers.go
+│   │               │       │   │   └── wrappers_gen.go
+│   │               │       │   ├── impl
+│   │               │       │   │   ├── api_export.go
+│   │               │       │   │   ├── api_export_opaque.go
+│   │               │       │   │   ├── bitmap.go
+│   │               │       │   │   ├── bitmap_race.go
+│   │               │       │   │   ├── checkinit.go
+│   │               │       │   │   ├── codec_extension.go
+│   │               │       │   │   ├── codec_field.go
+│   │               │       │   │   ├── codec_field_opaque.go
+│   │               │       │   │   ├── codec_gen.go
+│   │               │       │   │   ├── codec_map.go
+│   │               │       │   │   ├── codec_map_go111.go
+│   │               │       │   │   ├── codec_map_go112.go
+│   │               │       │   │   ├── codec_message.go
+│   │               │       │   │   ├── codec_message_opaque.go
+│   │               │       │   │   ├── codec_messageset.go
+│   │               │       │   │   ├── codec_tables.go
+│   │               │       │   │   ├── codec_unsafe.go
+│   │               │       │   │   ├── convert.go
+│   │               │       │   │   ├── convert_list.go
+│   │               │       │   │   ├── convert_map.go
+│   │               │       │   │   ├── decode.go
+│   │               │       │   │   ├── encode.go
+│   │               │       │   │   ├── enum.go
+│   │               │       │   │   ├── equal.go
+│   │               │       │   │   ├── extension.go
+│   │               │       │   │   ├── lazy.go
+│   │               │       │   │   ├── legacy_enum.go
+│   │               │       │   │   ├── legacy_export.go
+│   │               │       │   │   ├── legacy_extension.go
+│   │               │       │   │   ├── legacy_file.go
+│   │               │       │   │   ├── legacy_message.go
+│   │               │       │   │   ├── merge.go
+│   │               │       │   │   ├── merge_gen.go
+│   │               │       │   │   ├── message.go
+│   │               │       │   │   ├── message_opaque.go
+│   │               │       │   │   ├── message_opaque_gen.go
+│   │               │       │   │   ├── message_reflect.go
+│   │               │       │   │   ├── message_reflect_field.go
+│   │               │       │   │   ├── message_reflect_field_gen.go
+│   │               │       │   │   ├── message_reflect_gen.go
+│   │               │       │   │   ├── pointer_unsafe.go
+│   │               │       │   │   ├── pointer_unsafe_opaque.go
+│   │               │       │   │   ├── presence.go
+│   │               │       │   │   ├── validate.go
+│   │               │       │   │   └── weak.go
+│   │               │       │   ├── order
+│   │               │       │   │   ├── order.go
+│   │               │       │   │   └── range.go
+│   │               │       │   ├── pragma
+│   │               │       │   │   └── pragma.go
+│   │               │       │   ├── protolazy
+│   │               │       │   │   ├── bufferreader.go
+│   │               │       │   │   ├── lazy.go
+│   │               │       │   │   └── pointer_unsafe.go
+│   │               │       │   ├── set
+│   │               │       │   │   └── ints.go
+│   │               │       │   ├── strs
+│   │               │       │   │   ├── strings.go
+│   │               │       │   │   ├── strings_unsafe_go120.go
+│   │               │       │   │   └── strings_unsafe_go121.go
+│   │               │       │   └── version
+│   │               │       │       └── version.go
+│   │               │       ├── proto
+│   │               │       │   ├── checkinit.go
+│   │               │       │   ├── decode.go
+│   │               │       │   ├── decode_gen.go
+│   │               │       │   ├── doc.go
+│   │               │       │   ├── encode.go
+│   │               │       │   ├── encode_gen.go
+│   │               │       │   ├── equal.go
+│   │               │       │   ├── extension.go
+│   │               │       │   ├── merge.go
+│   │               │       │   ├── messageset.go
+│   │               │       │   ├── proto.go
+│   │               │       │   ├── proto_methods.go
+│   │               │       │   ├── proto_reflect.go
+│   │               │       │   ├── reset.go
+│   │               │       │   ├── size.go
+│   │               │       │   ├── size_gen.go
+│   │               │       │   ├── wrapperopaque.go
+│   │               │       │   └── wrappers.go
+│   │               │       ├── protoadapt
+│   │               │       │   └── convert.go
+│   │               │       ├── reflect
+│   │               │       │   ├── protoreflect
+│   │               │       │   │   ├── methods.go
+│   │               │       │   │   ├── proto.go
+│   │               │       │   │   ├── source.go
+│   │               │       │   │   ├── source_gen.go
+│   │               │       │   │   ├── type.go
+│   │               │       │   │   ├── value.go
+│   │               │       │   │   ├── value_equal.go
+│   │               │       │   │   ├── value_union.go
+│   │               │       │   │   ├── value_unsafe_go120.go
+│   │               │       │   │   └── value_unsafe_go121.go
+│   │               │       │   └── protoregistry
+│   │               │       │       └── registry.go
+│   │               │       ├── runtime
+│   │               │       │   ├── protoiface
+│   │               │       │   │   ├── legacy.go
+│   │               │       │   │   └── methods.go
+│   │               │       │   └── protoimpl
+│   │               │       │       ├── impl.go
+│   │               │       │       └── version.go
+│   │               │       └── types
+│   │               │           └── known
+│   │               │               ├── anypb
+│   │               │               │   └── any.pb.go
+│   │               │               ├── durationpb
+│   │               │               │   └── duration.pb.go
+│   │               │               ├── emptypb
+│   │               │               │   └── empty.pb.go
+│   │               │               └── timestamppb
+│   │               │                   └── timestamp.pb.go
+│   │               ├── gopkg.in
+│   │               │   └── yaml.v3
+│   │               │       ├── LICENSE
+│   │               │       ├── NOTICE
+│   │               │       ├── README.md
+│   │               │       ├── apic.go
+│   │               │       ├── decode.go
+│   │               │       ├── emitterc.go
+│   │               │       ├── encode.go
+│   │               │       ├── parserc.go
+│   │               │       ├── readerc.go
+│   │               │       ├── resolve.go
+│   │               │       ├── scannerc.go
+│   │               │       ├── sorter.go
+│   │               │       ├── writerc.go
+│   │               │       ├── yaml.go
+│   │               │       ├── yamlh.go
+│   │               │       └── yamlprivateh.go
+│   │               └── modules.txt
+│   ├── explanation
+│   └── scripts
+│       ├── deploy.sh
+│       └── smoke-test.sh
+├── rs_prop.pdf
+├── tree.txt
+└── updates
+
+193 directories, 933 files

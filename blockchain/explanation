@@ -1,0 +1,444 @@
+# Explanation — How the Current Pipeline Works
+
+This document explains the **current** working system end to end: how a model
+prediction flows from the AI pipeline onto the Hyperledger Fabric ledger, and
+what every file in `blockchain/` does. Written as the reference for the
+dissertation's implementation chapter.
+
+---
+
+## 1. Big picture
+
+```
+ AI pipeline (Python, offline / Colab)
+      |
+      |  produces rows: {row_id, text, label, confidence}
+      v
+ blockchain.py  (FabricBridge)   <-- C1: Python -> chaincode bridge
+       |  hashes text -> sha256; NEVER sends raw text
+       v
+  peer CLI  (chaincode invoke / query)
+       |
+       v
+  2-org Hyperledger Fabric test-network (Raft, LevelDB)
+       |
+       v
+  misinformation chaincode (Go, contractapi)  <-- B1-B3
+       |
+       v
+  ledger: org registry + PENDING reports -> votes -> immutable FINAL/REJECTED
+       {row_id, language, content_hash, proposed_label, confidence,
+        model_version, timestamp, submitted_by, status, votes[]}
+```
+
+Three layers:
+
+1. **AI/NLP layer** — the transformer pipeline (in `apps/ai_service/`).
+2. **Bridge layer** — `blockchain.py` turns pipeline output into PENDING
+   reports and submits votes/finalization.
+3. **Ledger layer** — the Go chaincode + Fabric network that stores org
+   registrations, reports, votes, and the immutable final verdict.
+
+---
+
+## 2. The data model (what lands on-chain)
+
+Decided in Milestone B1 (extended for the review workflow) and written down in
+`blockchain/chaincode/misinformation/DATA_MODEL.md`. The key rules:
+
+- **Only metadata is stored, never the raw text.** The raw tweet is reduced to a
+  SHA-256 hex digest (`content_hash`).
+- **Key:** Fabric composite key `(pred, language, row_id)` — one report per
+  (language, row). `language` is `nso` (Sepedi), `zul` (isiZulu), or `eng`.
+- **Consortium review:** reports start **PENDING**; registered stakeholder orgs
+  vote `accept`/`reject` (one vote per org, keyed `vote:{language}:{row_id}:{mspid}`);
+  a report is **finalised immutably** once **≥ 2/3 of registered orgs** have
+  voted — `FINAL` if quorum accepted, else `REJECTED`.
+- **Immutable once finalised:** a FINAL/REJECTED record cannot be edited or
+  overwritten, and votes are closed. A re-classification after a model retrain
+  is a *new* report under a newer `model_version`.
+- **Provenance:** `submitted_by` and every `vote.voter_msp` (with txid) are
+  captured from transaction identities, so you always know which organisation
+  did what.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `row_id` | string | source dataset row id |
+| `language` | string | `nso` / `zul` / `eng` |
+| `content_hash` | string | sha256 hex of the text |
+| `proposed_label` | string | `"0"` reliable / `"1"` misinformation (claim) |
+| `confidence` | float | in `[0,1]`, validated |
+| `model_version` | string | e.g. `afroxlmr-large-nso-v1.0` |
+| `timestamp` | string | RFC 3339 UTC |
+| `submitted_by` | string | MSP id of the submitting org |
+| `status` | string | `PENDING` / `FINAL` / `REJECTED` |
+| `votes` | Vote[] | `{voter_msp, verdict, txid}` per org |
+| `finalized_by` / `finalized_at` | string | who/when it was finalised |
+
+---
+
+## 3. File-by-file walkthrough
+
+### 3.1 The chaincode (the ledger logic) — `blockchain/chaincode/misinformation/`
+
+This is the *only* part that runs inside the Fabric network.
+
+**`go/misinformation.go`** — the entire chaincode.
+
+- Defines `ReportRecord`, `Vote`, `RegisteredOrg` (the on-chain structs) and
+  `MisinformationContract`.
+- Uses the modern **`contractapi`** style (not the old `shim` style), so each
+  exported method automatically becomes a callable chaincode function.
+- `newReportKey` / `newOrgKey` / `newVoteKey` — build composite ledger keys.
+- `validateReportInput(...)` — rejects bad rows before anything is written.
+- **Consortium review lifecycle (v1.1):**
+  - `RegisterOrg` (invoke) — self-enrolls the calling org as a stakeholder.
+    Idempotent; returns the MSPID.
+  - `SubmitReport` (invoke) — creates a **PENDING** report. Only a registered
+    org may submit; records `submitted_by` from the MSP.
+  - `CastVote` (invoke) — one org's `accept`/`reject` verdict on a PENDING
+    report. One vote per org per report (enforced by the `vote:` composite key).
+  - `FinalizeReport` (invoke) — locks the report once **≥ 2/3 of registered
+    orgs** have voted: `FINAL` if quorum accepted, `REJECTED` otherwise. After
+    this the record is immutable and votes are closed.
+- **Queries (all read-only):**
+  - `QueryReport` / `QueryAllReports` / `GetReportCount` — fetch records.
+  - `QueryVotes` — the vote tally for a report.
+  - `QueryReportHistory` — ledger key history = the tamper-evident audit trail.
+  - `ComputeContentHash` — helper that hashes text the same way the Python
+    bridge does, so hashes can be verified.
+
+**`go/go.mod` / `go/go.sum`** — Go module definition; pins
+`fabric-chaincode-go/v2` and `fabric-contract-api-go/v2`.
+
+**`go/misinformation_test.go`** — unit tests (submit/query round-trip, duplicate
+rejection = immutability, input-validation rejections, count/all queries, hash
+helper). Run with `cd go && go test ./...`.
+
+**`go/mockstub_test.go`** — a vendored Apache-2.0 in-memory `MockStub` (from
+fabric-contract-api-go's own functional tests) so the chaincode can be tested
+without a running network. Implements state, range/partial-key queries, history,
+and a configurable fake X.509 identity (per-MSP) so multi-org voting can be
+tested without a network.
+
+**`go/vendor/`** — auto-generated by Fabric's `deployCC` during packaging
+(`go mod vendor`). Safe to delete; regenerated on every deploy and gitignored.
+
+**`DATA_MODEL.md`** — the written-down data-model decision record (B1).
+**`README.md`** — quick overview of design, functions, topology, scripts.
+**`DEPLOYMENT.md`** — Colab/Kaggle packaging notes (C2).
+
+### 3.2 The lifecycle scripts — `blockchain/scripts/`
+
+**`deploy.sh`** — one-command network bring-up + chaincode deployment (B4–B6).
+
+- Checks `jq` is available (the Fabric scripts need it).
+- `./scripts/deploy.sh` → `network.sh up` (starts 2-org Raft network) →
+  `createChannel` → `deployCC` (package → install on **both** orgs → approve on
+  **both** orgs → commit). Endorsement policy: `AND(Org1, Org2)`.
+- `./scripts/deploy.sh down` → tears the network down.
+
+**`onboard-org3.sh`** — robustness test: adds a 3rd stakeholder org.
+
+- Packages the chaincode, installs on all 3 peers, approves on all 3, and
+  re-commits with **`OutOf(2, Org1MSP, Org2MSP, Org3MSP)`** — a 2-of-3
+  endorsement quorum. Requires `test-network/addOrg3/addOrg3.sh up` first.
+- After this, the bridge/smoke-test use `org3` as an endorser and voter.
+
+**`smoke-test.sh`** — CLI smoke test proving the deployed chaincode works (B5).
+
+- Switches signing identity between org1/org2/org3 (`use_org`), so the test
+  exercises real multi-org behaviour.
+- Runs the full consortium review flow: `RegisterOrg` (all orgs) →
+  `SubmitReport` → `CastVote` (all orgs) → `FinalizeReport` → queries
+  (`QueryReport`, `QueryVotes`, `QueryAllReports`, `GetReportCount`,
+  `QueryReportHistory`).
+- Every invoke targets a 2-of-3 endorsing peer set (org1+org2, which satisfies
+  the `OutOf(2,...)` policy) with `--waitForEvent`.
+- This is the CLI-only replacement for the REST API layer (B5: REST deferred).
+
+### 3.3 The bridge — `apps/ai_service/v1-0-0/app/src/blockchain.py`
+
+C1 — the Python → chaincode connection. Two pieces:
+
+- **`Prediction`** (dataclass) — validates a prediction and hashes the raw text
+  with SHA-256 (`Prediction.hash_content`), matching `ComputeContentHash`
+  on-chain. Raw text is never sent over the wire.
+- **`FabricBridge`** — a thin wrapper around the `peer` CLI. Builds the correct
+  `CORE_PEER_*` env vars from the test-network's crypto material, then shells out
+  to `peer chaincode invoke/query`.
+  - `org=` selects the signing identity (`org1`/`org2`/`org3`);
+    `endorsers=` picks which peers endorse (default `["org1","org2"]` = 2 of
+    the 2/3 quorum after org3 onboarding).
+  - `invoke()` adds `--waitForEvent` so commits complete before returning.
+  - Review-workflow methods: `register_org`, `list_orgs`, `submit_report`,
+    `cast_vote(language, row_id, verdict)`, `finalize_report`.
+  - Query methods: `query_report`, `query_all`, `count`, `votes`, `history`.
+- **`submit_pipeline_output(rows, language, model_version, bridge)`** — batch
+  helper that takes pipeline rows `[{row_id, text, label, confidence}]`, hashes
+  each, and submits them as PENDING reports.
+
+Verified against the live network: register → submit → vote → finalize, plus
+count/query/history/hash equality (on-chain sha256 == Python sha256) all
+confirmed.
+
+### 3.4 What is NOT in `blockchain/` anymore (deleted in cleanup)
+
+The repo originally shipped with the **balance-transfer / fabcar tutorial**
+layer, which this project replaces. It has been **deleted** — these are the
+paths that existed and what they were, for the record:
+
+| Path | What it was | Used by the new system? |
+|------|-----------|------------------------|
+| `api-1.4/` | Fabric 1.4 Node.js REST API wrappers | No |
+| `api-2.0/` | Fabric 2.0 Node.js REST API wrappers | No |
+| `app/` | balance-transfer invoke/query JS helpers | No |
+| `app.js` | balance-transfer Express server (REST) | No |
+| `config.js`, `config.json` | balance-transfer connection config | No |
+| `package.json` | balance-transfer npm manifest | No |
+| `artifacts/` | old fabcar Go source + docker-compose crypto | No |
+| `channel-artifacts/` | generated `mychannel.block` | No (generated) |
+| `explorer/` | Fabric Explorer (optional UI) | No |
+| `fabcar.tar.gz` | packaged fabcar chaincode | No |
+| `ScriptDetails.tx`, `details.tx`, `errors.tx` | terminal transcripts from setup | No |
+| `log.txt` | log output | No |
+| old lifecycle/API scripts | `deployChaincode.sh`, `createChannel.sh`, `testAPIs.sh`, `cleanup.sh`, ... | No |
+
+The **MSP/TLS crypto material and channel artifacts** are *not* missing — they are
+runtime build artifacts generated on demand by `network.sh up` / `createChannel`
+inside `~/fabric-samples/test-network/organizations/` and `channel-artifacts/`,
+and are (correctly) never committed. The Python bridge reads them by path.
+
+Per the plan (B5), the REST API layer is deliberately **deferred**; all real
+interaction is CLI (`scripts/`) or the Python bridge (`blockchain.py`).
+
+---
+
+## 4. End-to-end flow (concrete)
+
+1. **Deploy:** `blockchain/scripts/deploy.sh` starts the 2-org network and
+   commits the `misinformation` chaincode v1.1 on `mychannel`.
+2. **Onboard:** each fact-checking org calls `RegisterOrg` (via CLI or bridge)
+   and becomes a stakeholder. Quorum is computed from the on-chain org count.
+3. **Produce:** the AI pipeline (in `apps/ai_service/`) predicts, producing rows
+   `{row_id, text, label, confidence}` per language.
+4. **Submit:** a registered org submits each row as a **PENDING** report —
+   `submit_report(...)` hashes the text, validates fields, and invokes
+   `SubmitReport` via the `peer` CLI against both orgs. `submitted_by` = the
+   submitter's MSP.
+5. **Vote:** every registered org calls `CastVote(language, row_id, accept|reject)`
+   — one vote per org per report, each with its own MSP + txid provenance.
+6. **Finalize:** any registered org calls `FinalizeReport` once **≥ 2/3 of
+   registered orgs** have voted. The report becomes immutable `FINAL` (if quorum
+   accepted) or `REJECTED`, embedding the full vote tally.
+7. **Audit:** `QueryReport` / `QueryAllReports` / `QueryVotes` /
+   `QueryReportHistory` (CLI or bridge) read records back; `GetReportCount`
+   gives totals.
+8. **Verify:** `ComputeContentHash` (on-chain) vs `Prediction.hash_content`
+   (Python) prove the ledger stored the intended text without ever receiving it.
+
+---
+
+## 5. Step-by-step pipeline guide
+
+End-to-end walkthrough from a clean machine to a prediction on the ledger.
+Run the steps in order. Everything below assumes you are in the repo root
+(`A_Blockchain_Enabled_Framework_for_Misinformation_Monitoring`).
+
+### Step 0 — Prerequisites
+
+- Docker running (tested with Docker 29.x on Linux/WSL2).
+- Go 1.22+ (`go version`).
+- `peer` / `configtxgen` / `cryptogen` binaries from `~/fabric-samples/bin`
+  (export on PATH if not already).
+- `jq` on PATH (the Fabric scripts need it; see `scripts/deploy.sh`).
+- Optional but recommended: a `Python 3.10+` env for the bridge.
+
+### Step 1 — Deploy the network and chaincode
+
+```bash
+cd blockchain
+./scripts/deploy.sh
+```
+
+This runs the full lifecycle: `network.sh up` (2-org Raft network) →
+`createChannel` (mychannel) → `deployCC` (package → install on org1 **and**
+org2 → approve on both → commit). When it finishes, `misinformation` v1.1 is
+committed and the network is live.
+
+### Step 2 — Verify the chaincode is committed (optional sanity check)
+
+```bash
+./scripts/smoke-test.sh
+```
+
+This runs the whole consortium review flow end-to-end via the CLI: register both
+orgs, submit a report, both orgs vote, finalize, then queries. See §4 for what
+each step does. This is the CLI-only equivalent of the old REST API (B5).
+
+### Step 3 — Unit-test the chaincode logic (no network needed)
+
+```bash
+cd blockchain/chaincode/misinformation/go
+go test ./...
+```
+
+Runs the mock-stub tests: org registration, unregistered-org rejection,
+submit/query round-trip, duplicate rejection, input validation, the full
+vote→finalize workflow (including quorum), rejection workflow, vote/history
+queries, count/all, and the hash helper. Do this anytime you edit the
+chaincode, before redeploying.
+
+### Step 4 — Produce predictions from the AI pipeline
+
+The NLP side lives in `apps/ai_service/`. From your training/eval notebook,
+produce a list of rows for one language, e.g.:
+
+```python
+rows = [
+    {"row_id": "1", "text": "vaccines are safe", "label": 0, "confidence": 0.99},
+    {"row_id": "2", "text": "fake cure all ills", "label": 1, "confidence": 0.88},
+]
+```
+
+(For the real flow this comes from `data_prep.py` / the eval notebook outputs.)
+
+### Step 5 — Onboard the stakeholder orgs
+
+The network must still be up from Step 1. Each fact-checking org enrolls
+on-chain. Run once per org (different terminal envs or swap `org=`):
+
+```python
+from blockchain import FabricBridge
+FabricBridge(org="org1").register_org()
+FabricBridge(org="org2").register_org()
+print("registered:", FabricBridge(org="org1").list_orgs())
+```
+
+### Step 6 — Submit reports for review
+
+```bash
+cd apps/ai_service/v1-0-0/app/src
+python3 <<'EOF'
+from blockchain import FabricBridge, submit_pipeline_output
+
+bridge = FabricBridge(org="org1")
+rows = [
+    {"row_id": "1", "text": "vaccines are safe", "label": 0, "confidence": 0.99},
+    {"row_id": "2", "text": "fake cure all ills", "label": 1, "confidence": 0.88},
+]
+submit_pipeline_output(rows, language="nso",
+                       model_version="afroxlmr-large-nso-v1.0", bridge=bridge)
+print("reports:", bridge.query_all())
+EOF
+```
+
+Each row is SHA-256 hashed locally and submitted as a **PENDING** report via
+`peer chaincode invoke` with both-org endorsement + `--waitForEvent`. Raw text
+never leaves the machine.
+
+### Step 7 — Vote and finalize
+
+Every registered org votes (one vote each), then any org finalizes once quorum
+is met. With 2 registered orgs, quorum = 2:
+
+```python
+from blockchain import FabricBridge
+
+FabricBridge(org="org1").cast_vote("nso", "1", "accept")
+FabricBridge(org="org2").cast_vote("nso", "1", "accept")
+print("votes:", FabricBridge(org="org1").votes("nso", "1"))
+
+# quorum reached (2/2) -> report 1 becomes FINAL
+FabricBridge(org="org1").finalize_report("nso", "1")
+print("report 1:", FabricBridge(org="org1").query_report("nso", "1"))
+```
+
+### Step 8 — Read it back (audit / verification)
+
+Same terminal:
+
+```python
+print("count:", bridge.count())
+print("all:  ", bridge.query_all())
+print("hist: ", bridge.history("nso", "1"))
+```
+
+`history` shows the ledger key history — the tamper-evident audit trail proving
+who wrote what, when, and with which txid.
+
+### Step 9 — Verify the hash (integrity check)
+
+Confirm the ledger stored the intended text without ever receiving it:
+
+```python
+from blockchain import Prediction
+onchain = bridge.query_report("nso", "1")["content_hash"]
+print("match:", onchain == Prediction.hash_content("vaccines are safe"))
+# -> True
+```
+
+### Step 10 — Tear down when done (optional)
+
+```bash
+cd blockchain
+./scripts/deploy.sh down
+```
+
+Stops and removes the network containers, chaincode images, and channel data.
+Rerun Step 1 to bring it all back.
+
+### Troubleshooting
+
+- **"peer command failed"** → the network isn't up; re-run Step 1.
+- **"org X is not a registered stakeholder; call RegisterOrg first"** → run
+  Step 5 before submitting/voting; the org must enroll on-chain first.
+- **"only N of M registered orgs have voted"** → quorum (2/3 of registered orgs)
+  not reached yet; have the remaining orgs cast votes, then finalize again.
+- **"report ... already exists (immutable once finalised)"** → that
+  (language, row_id) was already submitted. Use a different `row_id` or a new
+  `model_version`.
+- **`peer channel join` fails: "ledger [mychannel] already exists with state
+  [ACTIVE]"** on redeploy → old Docker volumes survived `down` and still hold the
+  previous ledger. Teardown, delete the volumes, and redeploy:
+  ```bash
+  ./scripts/deploy.sh down
+  docker volume rm compose_orderer.example.com \
+    compose_peer0.org1.example.com compose_peer0.org2.example.com
+  ./scripts/deploy.sh
+  ```
+  (or `docker volume prune` for all unused volumes).
+- **`jq: command not found`** → install jq (e.g. jq-linux-amd64 to
+  `~/.local/bin/jq`); `deploy.sh` picks it up automatically.
+
+---
+
+## 6. Old tutorial vs. what we have now
+
+The repo originally came from the **fabric-samples balance-transfer / fabcar
+tutorial** (`blockchain/api-1.4/`, `api-2.0/`, `app/`, `artifacts/`,
+`explorer/`, old lifecycle scripts — all deleted in the cleanup). The terminal
+transcripts `details.tx` / `ScriptDetails.tx` captured the failures the tutorial
+ran into on Fabric 2.0. Everything below was either hit first-hand or is the
+tutorial's known weak point; the right-hand column is how the current
+implementation removes it.
+
+| # | What the tutorial did / hit | Our system |
+|---|-----------------------------|------------|
+| 1 | **Fabcar toy chaincode** (create/query/delete "cars") — no domain logic, no validation, no immutability guarantee. | Real `misinformation` chaincode: domain schema, input validation, immutable final records, and a **consortium review workflow** (register orgs, submit, vote, finalise). |
+| 2 | **REST API via Node.js Express** (`api-1.4`, `api-2.0`, `app.js`) — a full HTTP server + `fabric-client`/`fabric-network` SDK + JWT auth + wallet management just to talk to the chaincode. Every failure surface (SDK version drift, wallets, connection profiles, long request timeouts 240s). | **No REST layer** (deliberately deferred, B5). Interaction is `peer` CLI (`scripts/`) or the Python bridge (`blockchain.py`) which shells out to `peer` — zero Node deps, nothing to drift. |
+| 3 | **Dual/conflicting SDK generations**: both Fabric 1.4 (`api-1.4`) and 2.0 (`api-2.0`) examples kept, plus old `shim`-style `fabcar` in `artifacts/`. Confusing, untestable. | One chaincode (`contractapi` style), one bridge (`blockchain.py`), one deploy path. |
+| 4 | **`--init-required` + manual `initLedger`**: the tutorial's chaincode needed an extra init step before it was usable, and `initLedger` could be invoked twice (double-initialised state). | `misinformation` needs **no init** ("Chaincode initialization is not required"); the ledger starts empty and is append-only from the first submit. |
+| 5 | **Orderer not ready during channel create**: `ScriptDetails.tx` shows `readBlock -> Expect block, but got status: &{NOT_FOUND}` then repeated `&{SERVICE_UNAVAILABLE}` retries (orderer still starting). | `deploy.sh` runs the network's own retry logic; and this failure class is eliminated because we never hand-create channels — `network.sh createChannel` does it. |
+| 6 | **Both-org approval / endorsement required** but manual: tutorial scripts only approved on one org first (transcripts show `"Org2MSP": false` in `checkcommitreadiness`), causing `commit` to fail or half-commit. | `deploy.sh` deploys through `deployCC` which installs/approves on **both** orgs, and the smoke test / bridge always invoke with `--peerAddresses` for both orgs + `--waitForEvent`. |
+| 7 | **Stale Docker volumes**: network restart fails with `ledger [mychannel] already exists with state [ACTIVE]` and `peer channel join` retry loops (`res=1` x5) — hit in this project too. | Documented in Troubleshooting (§5): `deploy.sh down` + delete the 3 `compose_*` volumes, redeploy. |
+| 8 | **Manually maintained channel artifacts**: `channel-artifacts/mychannel.block`, `mychannel.tx`, anchor-peer tx files, `system-genesis-block` — tracked/left lying around, easily stale. | Generated on demand by `network.sh`, ignored by git, deleted in cleanup. |
+| 9 | **fabcar chaincode had no provenance**: no knowledge of who submitted a transaction. | `submitted_by` and every vote's `voter_msp`/`txid` are read from transaction identities. |
+| 10 | **No integrity check between app and ledger** — the tutorial trusted whatever the client sent. | Raw text is SHA-256 hashed in the bridge and compared against the chaincode's `ComputeContentHash` (verified equal in live tests); raw text never reaches the network. |
+| 11 | **No test story**: the tutorial relied on manual curl/`peer` commands. | Chaincode has unit tests (`go test ./...`, mock-stub) covering the full vote→finalize workflow plus `smoke-test.sh` for live verification. |
+| 12 | **Version whiplash**: tutorial pinned old Fabric 1.4/2.0 era peer, `fabcar` packaging, and Node SDKs that no longer match current tooling. | Pinned modern stack: Fabric peer v2.5.16, `fabric-chaincode-go/v2`, `contract-api-go/v2`, Go 1.22+, Python 3.10+ bridge. |
+| 13 | **`jq` missing broke the lifecycle scripts** (Fabric scripts require it). | `deploy.sh` auto-detects a user-local `~/.local/bin/jq` and adds it to `PATH`. |
+| 14 | **Tutorial data model didn't fit the domain**: storing car objects; no notion of content, language, confidence, model version. | Schema (`DATA_MODEL.md`) designed for the misinformation-monitoring use case: row/language/hash/proposed_label/confidence/model/timestamp/submitted_by/status/votes. |
+| 15 | **Single-actor writes**: fabcar assumed one trusted writer; no consensus on content. | Multi-stakeholder review: reports need a 2/3 quorum of registered orgs' votes before an immutable verdict is committed. |
+
+
