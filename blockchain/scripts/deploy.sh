@@ -30,10 +30,15 @@ FABRIC_SAMPLES="${FABRIC_SAMPLES:-${HOME}/fabric-samples}"
 TEST_NETWORK="${FABRIC_SAMPLES}/test-network"
 
 CC_NAME="misinformation"
-CC_VERSION="1.1"
+CC_VERSION="2.1"
 CC_SEQUENCE="1"
 CC_SRC_LANGUAGE="go"
 CHANNEL_NAME="mychannel"
+
+# State database: CouchDB (rich JSON/Mango queries for the API + public
+# dashboard, v2 §6). Set STATE_DB="" for LevelDB.
+STATE_DB="${STATE_DB:--s couchdb}"
+STATE_DB_ARGS=${STATE_DB}
 
 # Endorsement policy for the 2-org deployment. Default (empty) = AND(Org1, Org2) —
 # both orgs must endorse every transaction. After running onboard-org3.sh the
@@ -49,7 +54,8 @@ if [[ "${1:-up}" == "down" ]]; then
 fi
 
 echo ">> Starting the 2-org test network (Raft consensus)..."
-./network.sh up
+# shellcheck disable=SC2086
+./network.sh up ${STATE_DB_ARGS}
 
 echo ">> Creating channel ${CHANNEL_NAME}..."
 ./network.sh createChannel -c "${CHANNEL_NAME}"

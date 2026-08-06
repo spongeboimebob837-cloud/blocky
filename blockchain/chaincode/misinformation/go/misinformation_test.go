@@ -3,13 +3,16 @@ package main
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/hyperledger/fabric-contract-api-go/v2/contractapi"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const validHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const validTs = "2025-01-01T00:00:00Z"
+const offChain = "https://server.example/api/reports/rep"
 
 func newTestStub(t *testing.T) *MockStub {
 	t.Helper()
@@ -48,16 +51,19 @@ func registerOrgs(t *testing.T, stub *MockStub, msps ...string) {
 	}
 }
 
+func submitReport(stub *MockStub, txID, msp, reportID string) *peer.Response {
+	return invokeAs(stub, txID, msp,
+		"SubmitReport", reportID, "nso", validHash, "1", "0.97", "model-v1", validTs, offChain+reportID)
+}
+
 func TestRegisterOrgAndList(t *testing.T) {
 	stub := newTestStub(t)
 	registerOrgs(t, stub, "Org1MSP", "Org2MSP", "Org3MSP")
 
-	res := invokeAs(stub, "tx-list", "Org1MSP", "ListRegisteredOrgs")
-	if res.Status != 200 {
-		t.Fatalf("ListRegisteredOrgs failed: %s", res.Message)
-	}
 	var orgs []*RegisteredOrg
-	if err := json.Unmarshal(res.Payload, &orgs); err != nil {
+	if res := invokeAs(stub, "tx-list", "Org1MSP", "ListRegisteredOrgs"); res.Status != 200 {
+		t.Fatalf("ListRegisteredOrgs failed: %s", res.Message)
+	} else if err := json.Unmarshal(res.Payload, &orgs); err != nil {
 		t.Fatalf("bad payload: %v", err)
 	}
 	if len(orgs) != 3 {
@@ -65,26 +71,69 @@ func TestRegisterOrgAndList(t *testing.T) {
 	}
 }
 
+func TestBootstrapClosedAfterFoundingLimit(t *testing.T) {
+	stub := newTestStub(t)
+	registerOrgs(t, stub, "Org1MSP", "Org2MSP", "Org3MSP")
+	// bootstrap window (3) exceeded -> a 4th org must use admission voting
+	if res := invokeAs(stub, "tx4", "Org4MSP", "RegisterOrg"); res.Status == 200 {
+		t.Fatalf("RegisterOrg should be closed once the founding limit is reached")
+	}
+}
+
+func TestAdmissionWorkflow(t *testing.T) {
+	stub := newTestStub(t)
+	registerOrgs(t, stub, "Org1MSP", "Org2MSP")
+
+	// org3 applies (Tier-1 channel member, not yet Tier-2 stakeholder)
+	if res := invokeAs(stub, "tx1", "Org3MSP", "RequestOrgAdmission", "Org 3", "ngo"); res.Status != 200 {
+		t.Fatalf("RequestOrgAdmission failed: %s", res.Message)
+	}
+	if res := invokeAs(stub, "tx2", "Org3MSP", "RequestOrgAdmission", "Org 3", "ngo"); res.Status == 200 {
+		t.Fatalf("duplicate admission request should be rejected")
+	}
+
+	// a candidate cannot vote on its own admission
+	if res := invokeAs(stub, "tx3", "Org3MSP", "VoteOnOrgAdmission", "Org3MSP", "accept"); res.Status == 200 {
+		t.Fatalf("candidate should not vote on its own admission")
+	}
+	// an unregistered org cannot vote on admissions
+	if res := invokeAs(stub, "tx4", "Org5MSP", "VoteOnOrgAdmission", "Org3MSP", "accept"); res.Status == 200 {
+		t.Fatalf("unregistered org should not vote on admission")
+	}
+
+	if res := invokeAs(stub, "tx5", "Org1MSP", "VoteOnOrgAdmission", "Org3MSP", "accept"); res.Status != 200 {
+		t.Fatalf("org1 vote failed: %s", res.Message)
+	}
+	if res := invokeAs(stub, "tx6", "Org2MSP", "VoteOnOrgAdmission", "Org3MSP", "accept"); res.Status != 200 {
+		t.Fatalf("org2 vote failed: %s", res.Message)
+	}
+	// 2 registered orgs -> quorum 2 -> admitted
+	if res := invokeAs(stub, "tx7", "Org2MSP", "FinalizeOrgAdmission", "Org3MSP"); res.Status != 200 {
+		t.Fatalf("finalize admission failed: %s", res.Message)
+	}
+
+	// org3 is now a stakeholder and can submit
+	if res := submitReport(stub, "tx8", "Org3MSP", "rep-1"); res.Status != 200 {
+		t.Fatalf("admitted org should be able to submit: %s", res.Message)
+	}
+}
+
 func TestUnregisteredCannotSubmit(t *testing.T) {
 	stub := newTestStub(t)
-	res := invokeAs(stub, "tx1", "Org5MSP",
-		"SubmitReport", "42", "nso", validHash, "1", "0.97", "model-v1", validTs)
-	if res.Status == 200 {
+	if res := submitReport(stub, "tx1", "Org5MSP", "rep-1"); res.Status == 200 {
 		t.Fatalf("unregistered org should not be able to submit")
 	}
 }
 
 func TestSubmitAndQuery(t *testing.T) {
 	stub := newTestStub(t)
-	registerOrgs(t, stub, "Org1MSP", "Org2MSP", "Org3MSP")
+	registerOrgs(t, stub, "Org1MSP")
 
-	res := invokeAs(stub, "tx1", "Org1MSP",
-		"SubmitReport", "42", "nso", validHash, "1", "0.97", "afroxlmr-large-nso-v1.0", validTs)
-	if res.Status != 200 {
+	if res := submitReport(stub, "tx1", "Org1MSP", "rep-42"); res.Status != 200 {
 		t.Fatalf("SubmitReport failed: %s", res.Message)
 	}
 
-	res = invokeAs(stub, "tx2", "Org1MSP", "QueryReport", "nso", "42")
+	res := invokeAs(stub, "tx2", "Org1MSP", "QueryReport", "rep-42")
 	if res.Status != 200 {
 		t.Fatalf("QueryReport failed: %s", res.Message)
 	}
@@ -92,7 +141,7 @@ func TestSubmitAndQuery(t *testing.T) {
 	if err := json.Unmarshal(res.Payload, &record); err != nil {
 		t.Fatalf("bad payload: %v", err)
 	}
-	if record.RowID != "42" || record.ProposedLabel != "1" || record.Confidence != 0.97 {
+	if record.ReportID != "rep-42" || record.ProposedLabel != "1" || record.Confidence != 0.97 {
 		t.Fatalf("unexpected record: %+v", record)
 	}
 	if record.Status != statusPending {
@@ -101,36 +150,39 @@ func TestSubmitAndQuery(t *testing.T) {
 	if record.SubmittedBy != "Org1MSP" {
 		t.Fatalf("expected submitted_by Org1MSP, got %s", record.SubmittedBy)
 	}
+	if record.OffChainURI != offChain+"rep-42" {
+		t.Fatalf("expected off_chain_uri, got %q", record.OffChainURI)
+	}
+	if record.VotingDeadline == "" {
+		t.Fatalf("expected voting_deadline to be set")
+	}
 }
 
 func TestDuplicateRejected(t *testing.T) {
 	stub := newTestStub(t)
 	registerOrgs(t, stub, "Org1MSP")
-	args := []string{"SubmitReport", "42", "nso", validHash, "1", "0.97", "model-v1", validTs}
-	if res := invokeAs(stub, "tx1", "Org1MSP", args...); res.Status != 200 {
+	if res := submitReport(stub, "tx1", "Org1MSP", "rep-42"); res.Status != 200 {
 		t.Fatalf("first submit failed: %s", res.Message)
 	}
-	if res := invokeAs(stub, "tx2", "Org1MSP", args...); res.Status == 200 {
+	if res := submitReport(stub, "tx2", "Org1MSP", "rep-42"); res.Status == 200 {
 		t.Fatalf("duplicate submit should have been rejected")
 	}
 }
 
 func TestInvalidInputsRejected(t *testing.T) {
-	registerOrgs := func(stub *MockStub) {
-		invokeAs(stub, "tx-reg", "Org1MSP", "RegisterOrg")
-	}
 	cases := [][]string{
-		{"", "nso", validHash, "1", "0.5", "model", validTs},
-		{"42", "fr", validHash, "1", "0.5", "model", validTs},
-		{"42", "nso", validHash, "2", "0.5", "model", validTs},
-		{"42", "nso", validHash, "1", "1.5", "model", validTs},
-		{"42", "nso", "short", "1", "0.5", "model", validTs},
-		{"42", "nso", validHash, "1", "0.5", "", validTs},
-		{"42", "nso", validHash, "1", "0.5", "model", "not-a-date"},
+		{"", "nso", validHash, "1", "0.5", "model", validTs, offChain},
+		{"rep", "fr", validHash, "1", "0.5", "model", validTs, offChain},
+		{"rep", "nso", validHash, "2", "0.5", "model", validTs, offChain},
+		{"rep", "nso", validHash, "1", "1.5", "model", validTs, offChain},
+		{"rep", "nso", "short", "1", "0.5", "model", validTs, offChain},
+		{"rep", "nso", validHash, "1", "0.5", "", validTs, offChain},
+		{"rep", "nso", validHash, "1", "0.5", "model", "not-a-date", offChain},
+		{"rep", "nso", validHash, "1", "0.5", "model", validTs, ""},
 	}
 	for i, args := range cases {
 		stub := newTestStub(t)
-		registerOrgs(stub)
+		invokeAs(stub, "tx-reg", "Org1MSP", "RegisterOrg")
 		res := invokeAs(stub, "tx1", "Org1MSP", append([]string{"SubmitReport"}, args...)...)
 		if res.Status == 200 {
 			t.Fatalf("case %d should have been rejected", i)
@@ -142,41 +194,34 @@ func TestVotingWorkflow(t *testing.T) {
 	stub := newTestStub(t)
 	registerOrgs(t, stub, "Org1MSP", "Org2MSP", "Org3MSP")
 
-	if res := invokeAs(stub, "tx1", "Org1MSP",
-		"SubmitReport", "42", "nso", validHash, "1", "0.97", "model-v1", validTs); res.Status != 200 {
+	if res := submitReport(stub, "tx1", "Org1MSP", "rep-42"); res.Status != 200 {
 		t.Fatalf("submit failed: %s", res.Message)
 	}
 
-	if res := invokeAs(stub, "tx2", "Org1MSP", "CastVote", "nso", "42", "accept"); res.Status != 200 {
+	if res := invokeAs(stub, "tx2", "Org1MSP", "CastVote", "rep-42", "accept"); res.Status != 200 {
 		t.Fatalf("org1 vote failed: %s", res.Message)
 	}
-
 	// org1 cannot vote twice
-	if res := invokeAs(stub, "tx3", "Org1MSP", "CastVote", "nso", "42", "reject"); res.Status == 200 {
+	if res := invokeAs(stub, "tx3", "Org1MSP", "CastVote", "rep-42", "reject"); res.Status == 200 {
 		t.Fatalf("double vote should have been rejected")
 	}
-
 	// finalizing with only 1 of 3 votes must fail (quorum 2)
-	if res := invokeAs(stub, "tx4", "Org2MSP", "FinalizeReport", "nso", "42"); res.Status == 200 {
+	if res := invokeAs(stub, "tx4", "Org2MSP", "FinalizeReport", "rep-42"); res.Status == 200 {
 		t.Fatalf("finalize before quorum should fail")
 	}
 
-	if res := invokeAs(stub, "tx5", "Org2MSP", "CastVote", "nso", "42", "accept"); res.Status != 200 {
+	if res := invokeAs(stub, "tx5", "Org2MSP", "CastVote", "rep-42", "accept"); res.Status != 200 {
 		t.Fatalf("org2 vote failed: %s", res.Message)
 	}
-
 	// quorum reached: 2 of 3 accepted -> FINAL
-	if res := invokeAs(stub, "tx6", "Org3MSP", "FinalizeReport", "nso", "42"); res.Status != 200 {
+	if res := invokeAs(stub, "tx6", "Org3MSP", "FinalizeReport", "rep-42"); res.Status != 200 {
 		t.Fatalf("finalize failed: %s", res.Message)
 	}
 
-	res := invokeAs(stub, "tx7", "Org3MSP", "QueryReport", "nso", "42")
-	if res.Status != 200 {
-		t.Fatalf("query failed: %s", res.Message)
-	}
+	res := invokeAs(stub, "tx7", "Org3MSP", "QueryReport", "rep-42")
 	var record ReportRecord
-	if err := json.Unmarshal(res.Payload, &record); err != nil {
-		t.Fatalf("bad payload: %v", err)
+	if res.Status != 200 || json.Unmarshal(res.Payload, &record) != nil {
+		t.Fatalf("query failed: %s", res.Message)
 	}
 	if record.Status != statusFinal {
 		t.Fatalf("expected FINAL, got %s", record.Status)
@@ -184,9 +229,8 @@ func TestVotingWorkflow(t *testing.T) {
 	if len(record.Votes) != 2 {
 		t.Fatalf("expected 2 votes, got %d", len(record.Votes))
 	}
-
 	// votes are closed once FINAL
-	if res := invokeAs(stub, "tx8", "Org3MSP", "CastVote", "nso", "42", "accept"); res.Status == 200 {
+	if res := invokeAs(stub, "tx8", "Org3MSP", "CastVote", "rep-42", "accept"); res.Status == 200 {
 		t.Fatalf("vote after finalize should be rejected")
 	}
 }
@@ -196,50 +240,96 @@ func TestRejectionWorkflow(t *testing.T) {
 	registerOrgs(t, stub, "Org1MSP", "Org2MSP")
 
 	if res := invokeAs(stub, "tx1", "Org1MSP",
-		"SubmitReport", "7", "zul", validHash, "0", "0.6", "model-v1", validTs); res.Status != 200 {
+		"SubmitReport", "rep-7", "zul", validHash, "0", "0.6", "model-v1", validTs, offChain+"rep-7"); res.Status != 200 {
 		t.Fatalf("submit failed: %s", res.Message)
 	}
-	if res := invokeAs(stub, "tx2", "Org1MSP", "CastVote", "zul", "7", "reject"); res.Status != 200 {
+	if res := invokeAs(stub, "tx2", "Org1MSP", "CastVote", "rep-7", "reject"); res.Status != 200 {
 		t.Fatalf("org1 vote failed: %s", res.Message)
 	}
-	if res := invokeAs(stub, "tx3", "Org2MSP", "CastVote", "zul", "7", "reject"); res.Status != 200 {
+	if res := invokeAs(stub, "tx3", "Org2MSP", "CastVote", "rep-7", "reject"); res.Status != 200 {
 		t.Fatalf("org2 vote failed: %s", res.Message)
 	}
-	// both orgs rejected -> REJECTED
-	if res := invokeAs(stub, "tx4", "Org1MSP", "FinalizeReport", "zul", "7"); res.Status != 200 {
+	if res := invokeAs(stub, "tx4", "Org1MSP", "FinalizeReport", "rep-7"); res.Status != 200 {
 		t.Fatalf("finalize failed: %s", res.Message)
 	}
-	res := invokeAs(stub, "tx5", "Org1MSP", "QueryReport", "zul", "7")
+	res := invokeAs(stub, "tx5", "Org1MSP", "QueryReport", "rep-7")
 	var record ReportRecord
-	if err := json.Unmarshal(res.Payload, &record); err != nil {
-		t.Fatalf("bad payload: %v", err)
+	if res.Status != 200 || json.Unmarshal(res.Payload, &record) != nil {
+		t.Fatalf("query failed")
 	}
 	if record.Status != statusRejected {
 		t.Fatalf("expected REJECTED, got %s", record.Status)
 	}
 }
 
+func TestExpireReport(t *testing.T) {
+	stub := newTestStub(t)
+	registerOrgs(t, stub, "Org1MSP")
+
+	// A normal (fresh) submission stays within its window and cannot expire yet.
+	submitReport(stub, "tx1", "Org1MSP", "rep-fresh")
+	if res := invokeAs(stub, "tx2", "Org1MSP", "ExpireReport", "rep-fresh"); res.Status == 200 {
+		t.Fatalf("fresh report should not be expirable")
+	}
+
+	// Submit with an anchored tx timestamp in the past -> deadline is in the past.
+	stub.TxTimestamp = timestamppb.New(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	if res := submitReport(stub, "tx3", "Org1MSP", "rep-old"); res.Status != 200 {
+		t.Fatalf("submit failed: %s", res.Message)
+	}
+	if res := invokeAs(stub, "tx4", "Org1MSP", "ExpireReport", "rep-old"); res.Status != 200 {
+		t.Fatalf("expire failed: %s", res.Message)
+	}
+	res := invokeAs(stub, "tx5", "Org1MSP", "QueryReport", "rep-old")
+	var record ReportRecord
+	if res.Status != 200 || json.Unmarshal(res.Payload, &record) != nil {
+		t.Fatalf("query failed")
+	}
+	if record.Status != statusExpired {
+		t.Fatalf("expected EXPIRED, got %s", record.Status)
+	}
+	if res := invokeAs(stub, "tx6", "Org1MSP", "CastVote", "rep-old", "accept"); res.Status == 200 {
+		t.Fatalf("vote after expire should be rejected")
+	}
+}
+
+func TestFinalizeAutoExpiresPastDeadline(t *testing.T) {
+	stub := newTestStub(t)
+	registerOrgs(t, stub, "Org1MSP")
+
+	stub.TxTimestamp = timestamppb.New(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	submitReport(stub, "tx1", "Org1MSP", "rep-old")
+	// past deadline with no quorum -> FinalizeReport transitions to EXPIRED
+	if res := invokeAs(stub, "tx2", "Org1MSP", "FinalizeReport", "rep-old"); res.Status != 200 {
+		t.Fatalf("finalize auto-expire failed: %s", res.Message)
+	}
+	res := invokeAs(stub, "tx3", "Org1MSP", "QueryReport", "rep-old")
+	var record ReportRecord
+	if res.Status != 200 || json.Unmarshal(res.Payload, &record) != nil {
+		t.Fatalf("query failed")
+	}
+	if record.Status != statusExpired {
+		t.Fatalf("expected EXPIRED, got %s", record.Status)
+	}
+}
+
 func TestQueryVotesAndHistory(t *testing.T) {
 	stub := newTestStub(t)
 	registerOrgs(t, stub, "Org1MSP", "Org2MSP")
-	invokeAs(stub, "tx1", "Org1MSP",
-		"SubmitReport", "1", "nso", validHash, "1", "0.9", "model-v1", validTs)
-	invokeAs(stub, "tx2", "Org1MSP", "CastVote", "nso", "1", "accept")
-	invokeAs(stub, "tx3", "Org2MSP", "CastVote", "nso", "1", "reject")
+	invokeAs(stub, "tx1", "Org1MSP", "SubmitReport", "rep-1", "nso", validHash, "1", "0.9", "model-v1", validTs, offChain+"rep-1")
+	invokeAs(stub, "tx2", "Org1MSP", "CastVote", "rep-1", "accept")
+	invokeAs(stub, "tx3", "Org2MSP", "CastVote", "rep-1", "reject")
 
-	res := invokeAs(stub, "tx4", "Org1MSP", "QueryVotes", "nso", "1")
-	if res.Status != 200 {
-		t.Fatalf("QueryVotes failed: %s", res.Message)
-	}
+	res := invokeAs(stub, "tx4", "Org1MSP", "QueryVotes", "rep-1")
 	var votes []*Vote
-	if err := json.Unmarshal(res.Payload, &votes); err != nil {
-		t.Fatalf("bad payload: %v", err)
+	if res.Status != 200 || json.Unmarshal(res.Payload, &votes) != nil {
+		t.Fatalf("QueryVotes failed: %s", res.Message)
 	}
 	if len(votes) != 2 {
 		t.Fatalf("expected 2 votes, got %d", len(votes))
 	}
 
-	res = invokeAs(stub, "tx5", "Org1MSP", "QueryReportHistory", "nso", "1")
+	res = invokeAs(stub, "tx5", "Org1MSP", "QueryReportHistory", "rep-1")
 	if res.Status != 200 || len(res.Payload) == 0 {
 		t.Fatalf("expected history entries: %s", res.Message)
 	}
@@ -248,8 +338,8 @@ func TestQueryVotesAndHistory(t *testing.T) {
 func TestCountAndAll(t *testing.T) {
 	stub := newTestStub(t)
 	registerOrgs(t, stub, "Org1MSP")
-	invokeAs(stub, "tx1", "Org1MSP", "SubmitReport", "1", "nso", validHash, "0", "0.80", "model-v1", validTs)
-	invokeAs(stub, "tx2", "Org1MSP", "SubmitReport", "2", "zul", validHash, "1", "0.90", "model-v1", validTs)
+	invokeAs(stub, "tx1", "Org1MSP", "SubmitReport", "rep-1", "nso", validHash, "0", "0.80", "model-v1", validTs, offChain+"rep-1")
+	invokeAs(stub, "tx2", "Org1MSP", "SubmitReport", "rep-2", "zul", validHash, "1", "0.90", "model-v1", validTs, offChain+"rep-2")
 
 	res := invokeAs(stub, "tx3", "Org1MSP", "GetReportCount")
 	if res.Status != 200 || string(res.Payload) != "2" {
@@ -257,12 +347,9 @@ func TestCountAndAll(t *testing.T) {
 	}
 
 	res = invokeAs(stub, "tx4", "Org1MSP", "QueryAllReports")
-	if res.Status != 200 {
-		t.Fatalf("QueryAll failed: %s", res.Message)
-	}
 	var records []*ReportRecord
-	if err := json.Unmarshal(res.Payload, &records); err != nil {
-		t.Fatalf("bad payload: %v", err)
+	if res.Status != 200 || json.Unmarshal(res.Payload, &records) != nil {
+		t.Fatalf("QueryAll failed: %s", res.Message)
 	}
 	if len(records) != 2 {
 		t.Fatalf("expected 2 records, got %d", len(records))

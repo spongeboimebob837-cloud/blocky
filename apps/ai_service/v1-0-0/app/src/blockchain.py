@@ -1,9 +1,15 @@
 """Python -> chaincode bridge (Track C, C1).
 
-Submits AI pipeline output (row_id, label, confidence, ...) to the Hyperledger
-Fabric ledger via the peer CLI (CLI shell-out — the PoC option documented in the
-plan; no Fabric SDK dependency needed, works in Colab/Kaggle when the Fabric
-binaries are bundled).
+Submits AI pipeline output (report_id, language, label, confidence, ...) to the
+Hyperledger Fabric ledger via the peer CLI (CLI shell-out — the PoC option
+documented in the plan; no Fabric SDK dependency needed, works in Colab/Kaggle
+when the Fabric binaries are bundled).
+
+v2 contract changes:
+  - Reports are keyed by a caller-supplied report_id.
+  - SubmitReport takes report_id + off_chain_uri (raw text never sent).
+  - Suspended reports have a voting_deadline and can expire (EXPIRED).
+  - Org membership is two-tier: genesis RegisterOrg, then admission voting.
 
 Contract: `blockchain/chaincode/misinformation/go/misinformation.go`
 Data model: `blockchain/chaincode/misinformation/DATA_MODEL.md`
@@ -22,7 +28,7 @@ from typing import Any, Dict, List, Optional, Sequence
 class Prediction:
     """One model prediction ready to be anchored on-chain (raw text is NOT sent)."""
 
-    row_id: str
+    report_id: str
     language: str  # nso | zul | eng
     label: str  # "0" reliable / "1" misinformation
     confidence: float  # [0,1]
@@ -150,47 +156,57 @@ class FabricBridge:
         except json.JSONDecodeError:
             return out
 
-    def submit_prediction(self, pred: Prediction) -> str:
-        """Anchor one prediction on-chain. Raw text is never transmitted."""
-        return self.invoke(
-            "SubmitPrediction",
-            [
-                pred.row_id, pred.language, pred.content_hash, pred.label,
-                f"{pred.confidence:.6f}", pred.model_version, pred.timestamp,
-            ],
-        )
+    # ---- Org membership (Tier-2 stakeholder status) --------------------------
 
     def register_org(self) -> str:
-        """Enroll the calling org as a stakeholder fact-checking org."""
+        """Enroll the calling org during the genesis bootstrap window."""
         return self.invoke("RegisterOrg", [])
 
     def list_orgs(self) -> Any:
         return self.query("ListRegisteredOrgs", [])
 
+    def request_admission(self, org_name: str, org_type: str) -> str:
+        """Request Tier-2 stakeholder status (PENDING admission request)."""
+        return self.invoke("RequestOrgAdmission", [org_name, org_type])
+
+    def vote_on_admission(self, candidate_msp: str, verdict: str) -> str:
+        """Vote 'accept'/'reject' on an org's admission request."""
+        return self.invoke("VoteOnOrgAdmission", [candidate_msp, verdict])
+
+    def finalize_admission(self, candidate_msp: str) -> str:
+        """Finalize an admission once 2/3 of registered orgs have voted."""
+        return self.invoke("FinalizeOrgAdmission", [candidate_msp])
+
+    def query_admission(self, candidate_msp: str) -> Any:
+        return self.query("QueryOrgAdmission", [candidate_msp])
+
+    # ---- Reports -------------------------------------------------------------
+
     def submit_report(
-        self, row_id: str, language: str, content_hash: str, label: str,
-        confidence: float, model_version: str, timestamp: str,
+        self, report_id: str, language: str, content_hash: str, label: str,
+        confidence: float, model_version: str, timestamp: str, off_chain_uri: str,
     ) -> str:
         """Submit a report for stakeholder review (PENDING)."""
         return self.invoke(
             "SubmitReport",
-            [row_id, language, content_hash, label,
-             f"{confidence:.6f}", model_version, timestamp],
+            [report_id, language, content_hash, label,
+             f"{confidence:.6f}", model_version, timestamp, off_chain_uri],
         )
 
-    def cast_vote(self, language: str, row_id: str, verdict: str) -> str:
+    def cast_vote(self, report_id: str, verdict: str) -> str:
         """Vote 'accept' or 'reject' on a PENDING report."""
-        return self.invoke("CastVote", [language, row_id, verdict])
+        return self.invoke("CastVote", [report_id, verdict])
 
-    def finalize_report(self, language: str, row_id: str) -> str:
+    def finalize_report(self, report_id: str) -> str:
         """Finalize a report once >= 2/3 of registered orgs have voted."""
-        return self.invoke("FinalizeReport", [language, row_id])
+        return self.invoke("FinalizeReport", [report_id])
 
-    def query_prediction(self, language: str, row_id: str) -> Any:
-        return self.query("QueryPrediction", [language, row_id])
+    def expire_report(self, report_id: str) -> str:
+        """Mark a PENDING report EXPIRED once its voting deadline passes."""
+        return self.invoke("ExpireReport", [report_id])
 
-    def query_report(self, language: str, row_id: str) -> Any:
-        return self.query("QueryReport", [language, row_id])
+    def query_report(self, report_id: str) -> Any:
+        return self.query("QueryReport", [report_id])
 
     def query_all(self) -> Any:
         return self.query("QueryAllReports", [])
@@ -198,31 +214,32 @@ class FabricBridge:
     def count(self) -> Any:
         return self.query("GetReportCount", [])
 
-    def votes(self, language: str, row_id: str) -> Any:
-        return self.query("QueryVotes", [language, row_id])
+    def votes(self, report_id: str) -> Any:
+        return self.query("QueryVotes", [report_id])
 
-    def history(self, language: str, row_id: str) -> Any:
-        return self.query("QueryReportHistory", [language, row_id])
+    def history(self, report_id: str) -> Any:
+        return self.query("QueryReportHistory", [report_id])
 
 
 def submit_pipeline_output(
-    rows: List[Dict[str, Any]], *, language: str, model_version: str, bridge: FabricBridge
+    rows: List[Dict[str, Any]], *, language: str, model_version: str,
+    bridge: FabricBridge, base_uri: str = "https://server.example/api/reports",
 ) -> List[str]:
-    """Batch-submit pipeline output rows [{row_id, text, label, confidence}] as PENDING reports."""
+    """Batch-submit pipeline output rows as PENDING reports.
+
+    Rows provide [{report_id, text, label, confidence}]. `content_hash` is the
+    sha256 of the raw text (for a stronger whole-object hash, build the report
+    with `report.build` and pass that hash instead).
+    """
     txids: List[str] = []
     for row in rows:
-        pred = Prediction(
-            row_id=str(row["row_id"]),
-            language=language,
-            label=str(row["label"]),
-            confidence=float(row["confidence"]),
-            model_version=model_version,
-            timestamp=row.get("timestamp", _rfc3339_now()),
-            content_hash=Prediction.hash_content(row["text"]),
-        )
+        report_id = str(row["report_id"])
+        channel_hash = Prediction.hash_content(row["text"])
         txids.append(bridge.submit_report(
-            pred.row_id, pred.language, pred.content_hash, pred.label,
-            pred.confidence, pred.model_version, pred.timestamp,
+            report_id, language, channel_hash, str(row["label"]),
+            float(row["confidence"]), model_version,
+            row.get("timestamp", _rfc3339_now()),
+            f"{base_uri}/{report_id}",
         ))
     return txids
 
