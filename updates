@@ -1,3 +1,5 @@
+Update v1:
+
 # Project Status — Blockchain-Enabled Framework for Misinformation Monitoring
 
 **Purpose:** A blockchain-enabled framework for misinformation monitoring in
@@ -197,3 +199,521 @@ go test ./...      # registration, submit/query, validation, vote->finalize, quo
    predictions, then show the vote→finalize flow with all registered orgs.
 3. Optional for dissertation depth: richer chaincode queries (by label /
    language), or a 4th org to demonstrate quorum scaling (2/3 rule is dynamic).
+
+Updates v2:
+
+# System Architecture & Implementation Guide
+## Report Lifecycle, Verified Permissioning, Off-Chain Storage, API Gateway, Public Transparency, and Database Choice
+
+This document answers your six points with concrete, buildable steps. It extends —
+doesn't replace — the phased `PROJECT_ROADMAP.md`; a cross-reference table at the end
+maps every section here onto specific roadmap phases so the two documents stay in sync.
+
+---
+
+## 0. TL;DR — Decisions at a Glance
+
+| Question | Decision | Why (short version) |
+|---|---|---|
+| CouchDB or LevelDB? | **CouchDB** | Rich JSON queries (status/language/confidence/time filters) without hand-building composite-key indexes for every new filter you'll want for the API and public explorer |
+| Where does the full report live? | **Off-chain, in a backend DB behind your API server** (not IPFS, not on-chain) | Simplest reliable option for a project timeline; IPFS noted as an optional stretch upgrade |
+| How do orgs connect? | **REST API gateway wrapping the existing `FabricBridge`**, orgs authenticate with an API key issued at sign-up, never touch `peer` CLI directly | Matches your stated goal directly; keeps your already-working CLI-shell-out transport instead of a risky mid-project SDK rewrite |
+| How is "verified stakeholder" actually enforced? | **Two tiers**: Fabric channel membership (hard, requires real admission process) + an on-chain org-admission **vote** (reuses your existing 2/3 quorum machinery) | Currently `RegisterOrg` is self-service with zero vetting — this closes that gap using infrastructure you've already built |
+| How is public transparency reconciled with permissioning? | **Hyperledger Explorer**, deployed with one read-only Fabric identity, public-facing web UI | Writes stay permissioned (chaincode-enforced); reads become public without giving the public a Fabric identity of their own |
+| How do you test with real data? | **Your own held-out test set first, then genuinely new out-of-sample scraped data** | You already have real predictions sitting in `held_out_test_set.csv` — use them before reaching for anything external |
+
+---
+
+## 1. AI-Generated Reports — Schema & Steps
+
+### 1.1 The core problem with the current setup
+Right now your pipeline produces aggregate metrics (`sepedi_final_test_results.json`) but
+not a **per-row Report object** with a defined schema. `Prediction` in `blockchain.py` is
+close but minimal (no source data, no schema versioning, no distinction between
+AI-submitted and human/manually-submitted reports).
+
+### 1.2 Report schema (off-chain, full object)
+
+```json
+{
+  "report_id": "nso-42-v1",
+  "schema_version": "1.0",
+  "language": "nso",
+  "source": {
+    "type": "tweet",
+    "platform": "twitter",
+    "original_url": null,
+    "raw_text": "the actual tweet/article text",
+    "published_at": "2025-11-02T14:00:00Z"
+  },
+  "verdict": {
+    "label": "1",
+    "confidence": 0.94,
+    "submission_type": "ai_model",
+    "model_version": "afroxlmr-large-nso-v1.0",
+    "inference_timestamp": "2026-01-10T09:00:00Z"
+  },
+  "submitter": {
+    "org_mspid": "Org1MSP",
+    "submitted_at": "2026-01-10T09:00:05Z"
+  },
+  "content_hash": "sha256 of this JSON, canonically serialized (see 3.2)"
+}
+```
+
+Notes:
+- `submission_type` is `"ai_model"` or `"manual"` — per your framing ("conflate
+  stakeholder and AI model as the same submitter from this point on"), both go through
+  the identical submission path; this field just preserves *how* the verdict was
+  produced, which is valuable provenance for your dissertation's evaluation chapter even
+  if the workflow treats them identically downstream.
+- `raw_text` lives **only** in this off-chain object, never on-chain — consistent with
+  your existing `DATA_MODEL.md` design principle (§1.a: "never raw text").
+- `content_hash` is computed over the **whole object** (minus the hash field itself), not
+  just `raw_text` — this means tampering with *any* field (confidence, model version,
+  submitter) is detectable, not just tampering with the source text. This is a
+  meaningful strengthening over the current implementation, which only hashes raw text.
+
+### 1.3 Steps
+1. Add a small `report.py` module (or extend `blockchain.py`'s `Prediction` class) that
+   builds this JSON structure from either (a) a row of `final_evaluation.ipynb` output,
+   or (b) a manually-entered submission via the API.
+2. **Change `final_evaluation.ipynb` to export per-row predictions**, not just aggregate
+   metrics — currently it only saves `sepedi_final_test_results.json` (the aggregate
+   dict). Add a cell that saves `trainer.predict(tokenized_test)` output (per-row logits
+   → predicted label + confidence) alongside `test_df`, so you have real
+   `{row_id, text, predicted_label, confidence}` rows to build reports from — this is
+   the direct input to Phase 8 (full integration) in the roadmap and to the real-data
+   testing in §8 below.
+3. Write `canonicalize_and_hash(report_dict)`: `json.dumps(report_dict, sort_keys=True,
+   separators=(",", ":"))` then SHA-256. **Use this exact function on both the client
+   side (when submitting) and anywhere you later re-verify integrity** — inconsistent
+   JSON serialization (key order, whitespace) will silently produce different hashes for
+   identical content, which would look like a bug or tampering when it's actually just a
+   serialization mismatch. This is worth a unit test on its own.
+
+---
+
+## 2. Verified, Permissioned Stakeholders — Two-Tier Design & Steps
+
+### 2.1 What "permissioned" currently means in your system (and the gap)
+Two separate layers exist in Fabric, and right now only one is meaningfully enforced:
+
+- **Tier 1 — Channel membership (hard permissioning).** Only orgs whose MSP is part of
+  the channel configuration can even connect a peer or submit a signed transaction at
+  all. This is already enforced — adding org3 required `addOrg3.sh` and a channel
+  config update, not a simple API call. This is real permissioning.
+- **Tier 2 — Application-level "active stakeholder" status.** Your chaincode's
+  `RegisterOrg` function. **Currently this is fully self-service**: any identity from
+  any Tier-1 channel member can call `RegisterOrg` and immediately become a voting
+  stakeholder — there's no vetting, no approval step, nothing verifying the org is a
+  legitimate fact-checking organization rather than, say, a second identity controlled
+  by the same actor.
+
+So today, "permissioned" = "has a Fabric identity from a channel member org," not
+"has been verified as a legitimate stakeholder." Given you explicitly said "verified
+stakeholder organisation," this gap is worth closing.
+
+### 2.2 Design: reuse your existing voting infrastructure for org admission
+Instead of building a whole separate vetting system, extend the exact pattern you
+already use for report finalization to org admission itself:
+
+**New chaincode structures (add to `misinformation.go`):**
+```go
+type OrgAdmissionRequest struct {
+    CandidateMSP string `json:"candidate_msp"`
+    OrgName      string `json:"org_name"`
+    OrgType      string `json:"org_type"` // "fact-checker" | "media-monitor" | "ngo"
+    RequestedAt  string `json:"requested_at"`
+    Votes        []Vote `json:"votes"`
+    Status       string `json:"status"` // PENDING | ADMITTED | REJECTED
+}
+```
+
+**New functions:**
+- `RequestOrgAdmission(ctx, orgName, orgType)` — called by the candidate org's own
+  identity (they must already be a Tier-1 channel member — this is *requesting*
+  Tier-2 stakeholder status, not bypassing Tier-1). Creates a PENDING admission request
+  keyed `admission:{candidateMSP}`.
+- `VoteOnOrgAdmission(ctx, candidateMSPID, verdict)` — only **existing registered**
+  orgs may vote (same `isRegisteredOrg` check pattern as `CastVote`).
+- `FinalizeOrgAdmission(ctx, candidateMSPID)` — once ≥ 2/3 of *currently registered*
+  orgs have voted, either writes the `org:{mspid}` key (admitting them) or marks
+  REJECTED. Mirrors `FinalizeReport` almost exactly — you can largely copy that
+  function's structure.
+
+### 2.3 The bootstrapping problem (must decide explicitly)
+A pure "must be voted in by existing members" rule can't work for the very first
+members — there's no one to vote yet. Decide one of:
+- [ ] **Genesis allowlist**: keep the current simple `RegisterOrg` self-service call, but
+  restrict it to only work while the registered-org count is below a small founding
+  threshold (e.g., ≤ 3) — a hardcoded bootstrap window. After that, all new orgs must go
+  through the admission-vote workflow.
+- [ ] **Manual genesis registration**: the network operator (you, for the PoC) manually
+  registers the first 2–3 founding orgs via a privileged one-time script, then disables
+  that path and requires voting for everyone after.
+
+Either is fine for a dissertation PoC — just document the choice explicitly in
+`DATA_MODEL.md`, since "how do the first stakeholders get in" is a natural question in
+a viva about a "verified stakeholder" system.
+
+### 2.4 Real-world vetting (outside the chaincode)
+The on-chain vote only proves *existing orgs agreed* — it doesn't itself verify
+real-world legitimacy. For the PoC, document what the vetting process *would* look like
+in production (e.g., a candidate org submits registration documents / proof of
+fact-checking accreditation through an off-chain process before even requesting
+admission), and simulate it for your demo (e.g., a short "org application form" in your
+API, reviewed manually before you, as network operator, allow the `RequestOrgAdmission`
+call to go through). You don't need to build a document-verification system — you need
+to show you've thought about where the real-world trust boundary sits.
+
+**Steps:**
+1. Implement `OrgAdmissionRequest` + the three new functions in `misinformation.go`,
+   mirroring `SubmitReport`/`CastVote`/`FinalizeReport`.
+2. Decide and implement the bootstrapping rule (§2.3).
+3. Add unit tests: candidate can't vote on their own admission, un-admitted candidate
+   can't call `SubmitReport`/`CastVote` on reports, admission requires the same 2/3
+   quorum math as report finalization (reuse `quorumFor`).
+4. Update `DATA_MODEL.md` with the new admission workflow and the bootstrapping decision.
+5. Update `blockchain.py` / your future API (§4) with `request_admission`,
+   `vote_on_admission`, `finalize_admission` methods.
+
+---
+
+## 3. Report → Off-Chain Storage → On-Chain Block → Vote → Finalize (Full Flow)
+
+This is very close to what you already have — `SubmitReport` → `CastVote` →
+`FinalizeReport` already implements exactly the block-append-then-vote pattern you
+described. The gaps are: (a) no off-chain storage integration yet, (b) no
+timeout/expiry mechanism for votes that never reach quorum.
+
+### 3.1 The end-to-end flow (target state)
+
+```
+1. Org's client (or the API server on their behalf) builds the full Report object (§1.2)
+2. Client computes content_hash = canonical_hash(report)          [client-side, §1.3]
+3. Client POSTs the full report to the off-chain storage API  →  gets back off_chain_uri
+4. Client calls chaincode SubmitReport(row_id, language, content_hash,
+                                        label, confidence, model_version,
+                                        timestamp, off_chain_uri)   ← NEW PARAM
+5. Chaincode writes ReportRecord (PENDING) including off_chain_uri and a
+   computed voting_deadline = timestamp + fixed window (e.g. 72h)  ← NEW FIELDS
+6. Chaincode emits a "ReportSubmitted" event (real peer shim supports SetEvent;
+   MockStub doesn't — this only matters for the live network, not unit tests)
+7. Off-chain notification service (part of the API layer, §4) listens for the event
+   and notifies all registered orgs (webhook / email / dashboard badge) — this is
+   your "vote request sent to all registered orgs" step
+8. Registered orgs fetch the full report via off_chain_uri, review it, call CastVote
+9a. If ≥2/3 quorum reached before the deadline → any org calls FinalizeReport → FINAL/REJECTED
+9b. If deadline passes with no quorum → ExpireReport (new function) → EXPIRED
+     (triggered either by a scheduled off-chain job, or opportunistically inside
+      FinalizeReport if called after the deadline — see 3.3)
+10. Anyone with the off_chain_uri (permissioned org, or public via the explorer, §5)
+    can fetch the full report and independently recompute + compare content_hash
+    → proves the off-chain copy hasn't been tampered with
+```
+
+### 3.2 Chaincode changes needed
+
+**`ReportRecord` struct — add two fields:**
+```go
+OffChainURI    string `json:"off_chain_uri"`
+VotingDeadline string `json:"voting_deadline"` // RFC3339, set at submission time
+```
+
+**`SubmitReport` — add `offChainURI` parameter**, set `VotingDeadline` using
+`ctx.GetStub().GetTxTimestamp()` (the deterministic, ordering-service-assigned
+timestamp — **not** `time.Now()`, which would differ across peers and break
+determinism) plus a fixed duration constant, e.g.:
+```go
+const votingWindow = 72 * time.Hour
+txTime, _ := ctx.GetStub().GetTxTimestamp()
+deadline := txTime.AsTime().Add(votingWindow).UTC().Format(time.RFC3339)
+```
+
+**New function `ExpireReport(ctx, language, rowID)`:**
+- Reads the record; if `Status == PENDING` and current tx timestamp is past
+  `VotingDeadline`, sets `Status = "EXPIRED"` and writes it back (same immutability
+  rules apply afterward — no further votes).
+- If called before the deadline or on a non-PENDING report, returns an error (so it
+  can't be used to prematurely kill a report that's still legitimately in its window).
+
+**`FinalizeReport` — small addition:** if called after `VotingDeadline` has passed and
+quorum still isn't reached, auto-transition to `EXPIRED` instead of just erroring —
+reduces total reliance on the scheduled job below.
+
+### 3.3 Off-chain scheduler (chaincode can't run timers itself)
+Fabric chaincode is purely reactive — it only runs in response to transactions, so
+nothing calls `ExpireReport` on its own. Add a small scheduled job in your API server
+(§4): every hour, `QueryAllReports`, filter `PENDING` + `VotingDeadline` passed, call
+`ExpireReport` for each. `APScheduler` (Python) or a simple cron container both work
+fine at this scale.
+
+### 3.4 Off-chain storage — recommendation and steps
+For a project timeline, don't reach for IPFS first — it adds pinning/availability
+complexity that isn't the point of this project. Recommended:
+- [ ] A Postgres table (or SQLite if you want zero extra infrastructure):
+  `reports(report_id TEXT PRIMARY KEY, payload JSONB, content_hash TEXT, created_at TIMESTAMP)`.
+- [ ] `off_chain_uri` on-chain is just an API URL: `https://<your-server>/api/reports/{report_id}`.
+- [ ] `GET /api/reports/{report_id}` returns the full JSON — this endpoint can be public
+  or permissioned depending on how you want to handle §5's transparency goal (see §5.3).
+- [ ] **Optional stretch, not required for the core deliverable**: swap the Postgres
+  table for IPFS (`off_chain_uri` becomes an `ipfs://<CID>` reference) if you want a more
+  "blockchain-native" transparency story for the dissertation — note this in your
+  limitations/future-work section either way, since reviewers may ask why you didn't.
+
+### 3.5 Steps summary
+1. Extend `ReportRecord` + `SubmitReport` signature (Go) — `off_chain_uri`,
+   `voting_deadline`.
+2. Add `ExpireReport` chaincode function + unit tests (deadline-passed → EXPIRED;
+   deadline-not-passed → rejected call).
+3. Update `FinalizeReport` for the auto-expire-on-late-call behaviour.
+4. Update `blockchain.py`: `submit_report()` gains an `off_chain_uri` parameter;
+   add `expire_report()`.
+5. Stand up the off-chain storage table + `POST /api/reports` / `GET /api/reports/{id}`
+   endpoints (this is really part of §4's API server, built together).
+6. Build `verify_report_integrity(report_id)` — fetch full report, recompute hash,
+   compare to on-chain `content_hash`. **Demo this explicitly** — it's the concrete proof
+   of your tamper-evidence claim and makes a strong dissertation/viva moment.
+7. Build the scheduled expiry job.
+8. Build the event-listener/notification piece (can be as simple as the API polling
+   `QueryAllReports` for new PENDING entries every few minutes if you don't want to deal
+   with Fabric chaincode events directly — less elegant, considerably less setup risk;
+   real chaincode events via the peer's event service are the "proper" version if time
+   allows).
+
+---
+
+## 4. API Gateway Layer — Architecture & Steps
+
+### 4.1 Architecture
+```
+   Fact-checking org's browser/client
+              |  HTTPS + API key
+              v
+   ┌─────────────────────────────┐
+   │   API Gateway (FastAPI)      │   ← single server, orgs never touch peer CLI
+   │  - org auth (API key → MSP)  │
+   │  - off-chain report storage  │
+   │  - wraps FabricBridge        │
+   │  - scheduled expiry job      │
+   └───────────┬───────────────────┘
+               │  shells out to `peer` CLI per org's crypto material
+               v
+   Fabric network (orderer + peers, your existing test-network)
+```
+
+Keep using `FabricBridge`'s CLI shell-out — it's already built, tested, and you've
+independently verified hash equality on the live network. Don't rewrite the transport
+layer mid-project unless Phase 9B's latency numbers show subprocess spawn overhead is a
+real bottleneck; if it does become one later, migrating specific hot paths to the
+Fabric Gateway SDK (Node.js/Go — no official Python client from Hyperledger) is a
+scoped follow-up, not a prerequisite.
+
+### 4.2 Identity handling (the part that needs a real decision)
+The API server needs to sign transactions **as the calling org**, not as itself. Two
+options:
+
+- **Option A (recommended for PoC): server holds each org's crypto material.**
+  At sign-up, you provision each org's MSP/TLS material into the server's filesystem
+  (one directory per org, exactly like `FabricBridge`'s `_build_env()` already expects),
+  and map their issued API key to an `org=` parameter passed into `FabricBridge`. Simple,
+  works with your existing code, but means the server is a trusted custodian of every
+  org's keys — acceptable for a PoC/demo, worth flagging as a production limitation in
+  your dissertation (a real deployment would want each org holding its own keys and
+  connecting via their own client, with the server only relaying already-signed
+  transactions — a materially bigger build).
+- **Option B (more correct, more work): orgs hold their own keys locally**, run a thin
+  local client (could literally be `FabricBridge` running on their machine, extending
+  Phase 7's CLI tool), and the "API server" is really just the Fabric network itself
+  plus your off-chain storage service — no shared signing custodian at all.
+
+**Recommendation:** build Option A for the demo/dissertation (simpler, faster, and the
+custodial-trust tradeoff is a legitimate, explainable design decision for a PoC), and
+explicitly write up Option B as the production-hardening path in your limitations
+section.
+
+### 4.3 Core endpoints
+```
+POST   /api/orgs/apply              — submit org application (§2.4 off-chain vetting)
+POST   /api/orgs/{msp}/admission    — RequestOrgAdmission (once approved to apply)
+POST   /api/orgs/{msp}/admission/vote — VoteOnOrgAdmission
+GET    /api/orgs                    — ListRegisteredOrgs
+
+POST   /api/reports                 — full flow: store off-chain, hash, SubmitReport
+GET    /api/reports/{report_id}     — fetch full off-chain report (§3.4)
+GET    /api/reports/{report_id}/chain — QueryReport (on-chain record)
+GET    /api/reports?status=PENDING&language=nso  — filtered list (CouchDB-backed)
+POST   /api/reports/{report_id}/vote — CastVote
+POST   /api/reports/{report_id}/finalize — FinalizeReport
+GET    /api/reports/{report_id}/verify — recompute + compare hash (§3.5 step 6)
+GET    /api/reports/{report_id}/history — QueryReportHistory
+```
+
+### 4.4 Steps
+1. Scaffold FastAPI project (`apps/ai_service/v1-0-0/app/api/`), with an API-key auth
+   dependency mapping keys → org identity.
+2. Implement the report endpoints, wiring into `FabricBridge` + the off-chain storage
+   table.
+3. Implement the org admission endpoints wiring into the new chaincode functions
+   (§2.2).
+4. Add the scheduled expiry job (`APScheduler`, run in-process or as a separate
+   container).
+5. Add basic request logging — you'll want this raw data for Phase 9B's latency
+   measurements anyway, so instrument timing here from the start rather than bolting it
+   on later.
+6. This *is* Phase 7 of the roadmap, upgraded from "CLI tool" to "full API" — update
+   `PROJECT_ROADMAP.md` Phase 7 to point at this section once you start building it.
+
+---
+
+## 5. Public Transparency via Blockchain Explorer — Steps
+
+### 5.1 The reconciliation
+Permissioning controls **who can write** (submit, vote, finalize) — it doesn't have to
+control **who can read**. Fabric already supports this cleanly: give one identity
+**read-only** access (an MSP identity that's a channel member but is never registered as
+a stakeholder org, so it can query but never gets past `isRegisteredOrg` checks even if
+someone tried to misuse it for writes — though for true safety, front it with an explorer
+tool that only ever issues query calls, never invokes).
+
+### 5.2 Recommended: Hyperledger Explorer
+- [ ] Deploy [Hyperledger Explorer](https://github.com/hyperledger/blockchain-explorer)
+  (official Fabric tooling — good to cite directly in your dissertation as an
+  established tool rather than something you built from scratch, which strengthens
+  credibility) against your channel.
+- [ ] Configure it with **one dedicated read-only connection profile** (its own MSP
+  identity, enrolled via your Fabric CA, that is a channel member but never calls
+  `RegisterOrg`).
+- [ ] Host the Explorer web UI on a public-facing address (or at minimum, demo-accessible
+  during your viva) — it gives block-by-block, transaction-by-transaction browsing out
+  of the box, no custom frontend work needed.
+- [ ] Explorer shows raw ledger contents (composite keys, JSON values) — since your
+  on-chain data never includes raw text (only hashes + off-chain URIs), this is safe to
+  expose publicly by design; you don't need to redact anything.
+
+### 5.3 Alternative/complement: a thin custom public dashboard
+If Explorer proves heavier to stand up than your remaining time allows, or you want a
+more tailored public view (e.g., a simple "here's what's been fact-checked this week"
+page rather than raw ledger browsing):
+- [ ] Reuse the read-only query endpoints from your API (§4.3's `GET` routes) with no
+  auth required, backed by the same read-only Fabric identity.
+- [ ] A simple static HTML page (or the same lightweight frontend from Phase 7.2) listing
+  FINAL/REJECTED reports, their verdicts, and links to the full off-chain report (minus
+  anything you decide shouldn't be public — though per your data model, there's nothing
+  sensitive on-chain to begin with).
+- [ ] This is strictly less impressive from a "we used real blockchain tooling"
+  standpoint than Explorer, but is lower-risk to get working reliably by a deadline —
+  worth having as a fallback even if Explorer is your primary plan.
+
+**Recommendation:** attempt Explorer first (better dissertation citation, less custom
+code to maintain), keep the custom dashboard as a documented fallback plan, not
+something you necessarily build in parallel unless time allows.
+
+---
+
+## 6. CouchDB vs LevelDB — Full Comparison
+
+| | LevelDB (current default) | CouchDB |
+|---|---|---|
+| Query model | Exact key lookup + composite-key prefix range only | Full JSON/Mango rich queries (any field, ranges, `$or`/`$and`) |
+| Fits your current chaincode | Yes — `GetStateByPartialCompositeKey` is all LevelDB-friendly | Yes — same composite-key calls still work, you *gain* rich query on top |
+| Fits your planned features | Query-by-language/status (Phase 6) needs new composite keys per filter you want, by hand | Query-by-anything works without new indexes |
+| Fits public explorer/API filtering | Limited — you'd hand-build an index for every filter combination the public dashboard wants | Natural fit — dashboard filters map directly to Mango queries |
+| Operational cost | Simpler — embedded, no extra container | One more container to deploy/monitor, slightly higher latency per read |
+| Data format requirement | Any bytes | Must be valid JSON (already true for your `ReportRecord`/`Vote`/`RegisteredOrg` — no change needed) |
+| Fabric test-network support | Default | Built-in flag: `./network.sh up -s couchdb` |
+
+**Recommendation: CouchDB.** Given you want (a) public filtering in the explorer/API,
+(b) status/language/time-range queries you already scoped in Phase 6, and (c) the
+migration cost is effectively one flag change plus redeploying (your chaincode's
+composite-key calls keep working unmodified, you're purely adding capability, not
+removing anything) — there's no real reason to stay on LevelDB here. Keep LevelDB in
+mind as the right call only if you were optimizing for absolute minimal operational
+footprint over query flexibility, which isn't your priority given the stated goals.
+
+**Steps:**
+1. `./network.sh down` (clean slate).
+2. `./network.sh up -s couchdb -c mychannel` (or update `deploy.sh` to pass `-s couchdb`
+   through — small script edit).
+3. Redeploy chaincode as usual — no Go code changes required for basic operation.
+4. Once running, you can hit CouchDB's own Fauxton UI (typically `localhost:5984/_utils`)
+   directly against the state database for ad-hoc query testing during development,
+   separate from your production API's Mango queries.
+5. For richer chaincode-side queries (e.g., `QueryReportsByConfidenceRange`), use
+   `ctx.GetStub().GetQueryResult(mangoQueryString)` — this is the CouchDB-only chaincode
+   API that returns `"not implemented"` in your current `MockStub` (`GetQueryResult`),
+   so **new unit tests for Mango-query functions will need either an extended MockStub
+   or integration testing against a real CouchDB-backed network** — flag this as an
+   extra testing consideration when you build these functions.
+
+---
+
+## 7. Testing With Real Data — Steps
+
+### 7.1 Start with data you already have
+1. Your `held_out_test_set.csv` (produced by `training.ipynb`, consumed by
+   `final_evaluation.ipynb`) is genuine real data with genuine model predictions —
+   use this **first**, before reaching for anything external.
+2. Per §1.3 step 2, export per-row predictions from `final_evaluation.ipynb` (not just
+   aggregate metrics).
+3. Write `submit_test_batch.py`: reads N rows, builds full Report objects (§1.2) using
+   the real tweet text + real model verdict, submits through the API (§4), and has 2–3
+   test orgs (your Phase 9B VMs are perfect for this — reuse that setup) vote.
+4. **Interesting side-analysis for your dissertation**: compare the on-chain FINAL
+   verdict (after consortium voting) against the known ground-truth label from the
+   dataset. Does org voting improve accuracy over the raw model prediction, or just add
+   latency? This is a genuinely useful research question your system is well-positioned
+   to answer, and it's free once the pipeline exists.
+
+### 7.2 Fresh, out-of-sample real-world data
+1. Once the held-out-set test passes, pull a small batch of **genuinely new** data not
+   in your training or test sets at all — e.g., recent South African election-related
+   tweets/articles, scraped or manually collected.
+2. Run inference on these with your trained model, submit through the full pipeline.
+3. This demonstrates the system operating in a live/production-like mode, not just
+   replaying historical test data — worth having at least one clean example of this for
+   the dissertation demo (Phase 8's integration artifact).
+
+### 7.3 Edge cases worth deliberately including
+- A genuine duplicate submission (same real row submitted twice) — confirms the
+  "already exists" rejection works on real data, not just synthetic test fixtures.
+- A borderline-confidence row (model confidence near 0.5) — see how org voters handle
+  genuinely ambiguous cases; this is exactly the scenario your consortium-review design
+  exists for, worth highlighting explicitly.
+- A non-English-contaminated row if any exist in your Sepedi/isiZulu data (code-switched
+  text) — worth knowing how your anonymization and model handle it.
+- Combine with Phase 9B: run the multi-VM load test using **real report content**
+  (actual tweet lengths/structure) rather than trivial placeholder strings, so your
+  latency/throughput numbers are representative of real payload sizes.
+
+---
+
+## 8. Cross-Reference to `PROJECT_ROADMAP.md`
+
+| This document's section | Roadmap phase it extends |
+|---|---|
+| §1 Report schema | Phase 3/5 (fine-tuning) output format, feeds Phase 8 (integration) |
+| §2 Verified stakeholders | Phase 6 (blockchain depth) — add as Phase 6.4 |
+| §3 Off-chain storage + expiry | Phase 6 (blockchain depth) — add as Phase 6.5; also touches Phase 8 |
+| §4 API gateway | **Replaces/upgrades Phase 7** ("usability layer") from CLI-only to full API |
+| §5 Public explorer | New addition to Phase 7 — add as Phase 7.3 |
+| §6 CouchDB migration | New addition — insert as **Phase 6.0** (do this *before* Phase 6.1's filtered queries, since those queries are much easier to write against CouchDB) |
+| §7 Real-data testing | Directly feeds Phase 8 (integration) and Phase 9B (performance testing) — use real data for both, not synthetic rows |
+
+### Suggested phase re-ordering given this document
+1. Phase 0 (hygiene) — unchanged
+2. **Phase 6.0 (CouchDB migration)** — moved earlier, do before other blockchain work
+3. Phase 1 (EDA) — unchanged, parallel track
+4. **Phase 6.2 (org metadata) + Phase 6.4 (verified admission voting)** — do together,
+   same struct changes
+5. **Phase 6.5 (off-chain storage + report schema + expiry)** — the biggest single chunk
+   of new work in this document
+6. Phase 2–3 (data quality, Sepedi re-run) — unchanged, parallel track
+7. **Phase 7, rebuilt as the full API gateway (§4) + explorer (§5)**
+8. Phase 5 (isiZulu) — unchanged, parallel track
+9. Phase 8 (integration) — now using the real report schema + API + off-chain storage,
+   plus real data per §7
+10. Phase 9A/9B (validation, performance) — now testable with real payload sizes and the
+    real API layer, not the CLI shell-out directly
+11. Phase 10–11 (dissertation alignment, submission) — unchanged

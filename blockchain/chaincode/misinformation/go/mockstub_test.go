@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric-chaincode-go/v2/shim"
+	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/queryresult"
 	mspproto "github.com/hyperledger/fabric-protos-go-apiv2/msp"
 	"github.com/hyperledger/fabric-protos-go-apiv2/peer"
-	"github.com/hyperledger/fabric-protos-go-apiv2/ledger/queryresult"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -105,7 +105,11 @@ func (stub *MockStub) GetFunctionAndParameters() (function string, params []stri
 func (stub *MockStub) MockTransactionStart(txid string) {
 	stub.TxID = txid
 	stub.setSignedProposal(&peer.SignedProposal{})
-	stub.TxTimestamp = timestamppb.Now()
+	// Preserve a manually-set TxTimestamp so tests can simulate the
+	// ordering-service-assigned transaction time for deadline logic.
+	if stub.TxTimestamp == nil {
+		stub.TxTimestamp = timestamppb.Now()
+	}
 }
 
 // MockTransactionEnd End a mocked transaction, clearing the UUID.

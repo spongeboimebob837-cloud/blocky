@@ -1,11 +1,21 @@
 // Misinformation monitoring chaincode.
 //
-// Consortium review workflow: multiple fact-checking organisations register
-// on-chain, submit reports, and every stakeholder organisation votes on the
-// report's legitimacy. Once >= 2/3 of registered orgs have voted, the report
-// is finalised and becomes an immutable ledger record.
+// Consortium review workflow: multiple fact-checking organisations join, submit
+// reports, and every stakeholder organisation votes on each report's legitimacy.
+// Once >= 2/3 of registered orgs have voted, the report is finalised (or expires)
+// and becomes an immutable ledger record.
 //
-// Statuses: PENDING -> (votes) -> FINAL (accepted) | REJECTED.
+// Statuses: PENDING -> FINAL (accepted) | REJECTED | EXPIRED.
+//
+// v2 additions:
+//   - Reports are keyed by a caller-supplied report_id (not language+row_id).
+//   - Each PENDING report carries off_chain_uri (full report lives off-chain, raw
+//     text never touches the ledger) and a voting_deadline = tx-time + 72h.
+//   - Org membership is two-tier: Tier-1 channel membership (Fabric) plus an
+//     on-chain admission vote. RegisterOrg only works during a small genesis
+//     bootstrap window; after that new orgs apply via RequestOrgAdmission and are
+//     voted in by existing registered orgs (reuses the 2/3 quorum).
+//
 // Deliberately simple, modular, platform-agnostic audit layer (per proposal).
 // See DATA_MODEL.md.
 package main
@@ -26,9 +36,23 @@ const (
 	statusPending  = "PENDING"
 	statusFinal    = "FINAL"
 	statusRejected = "REJECTED"
+	statusExpired  = "EXPIRED"
+
+	// admissionPending/Admitted/Rejected track org admission requests.
+	admissionPending  = "PENDING"
+	admissionAdmitted = "ADMITTED"
+	admissionRejected = "REJECTED"
+
+	// foundingOrgLimit is the genesis bootstrap window: while fewer than this many
+	// orgs are registered, self-service RegisterOrg is allowed. Once the limit is
+	// reached all new orgs must go through the admission-vote workflow.
+	foundingOrgLimit = 3
+
+	// votingWindow is how long a PENDING report stays open for votes.
+	votingWindow = 72 * time.Hour
 )
 
-// Vote is one organisation's verdict on a report.
+// Vote is one organisation's verdict on a report (or an org admission request).
 type Vote struct {
 	VoterMSP string `json:"voter_msp"`
 	Verdict  string `json:"verdict"` // "accept" | "reject"
@@ -36,20 +60,22 @@ type Vote struct {
 }
 
 // ReportRecord is the on-chain audit record for one report.
-// Raw text is never stored; only an integrity hash of it.
+// Raw text is never stored; only an integrity hash plus an off-chain URI.
 type ReportRecord struct {
-	RowID         string   `json:"row_id"`
-	Language      string   `json:"language"`
-	ContentHash   string   `json:"content_hash"`
-	ProposedLabel string   `json:"proposed_label"` // "0" reliable | "1" misinformation (claim)
-	Confidence    float64  `json:"confidence"`
-	ModelVersion  string   `json:"model_version"`
-	Timestamp     string   `json:"timestamp"`
-	SubmittedBy   string   `json:"submitted_by"`
-	Status        string   `json:"status"` // PENDING | FINAL | REJECTED
-	Votes         []Vote   `json:"votes"`
-	FinalizedBy   string   `json:"finalized_by,omitempty" metadata:",optional"`
-	FinalizedAt   string   `json:"finalized_at,omitempty" metadata:",optional"`
+	ReportID       string  `json:"report_id"`
+	Language       string  `json:"language"`
+	ContentHash    string  `json:"content_hash"`
+	ProposedLabel  string  `json:"proposed_label"` // "0" reliable | "1" misinformation (claim)
+	Confidence     float64 `json:"confidence"`
+	ModelVersion   string  `json:"model_version"`
+	Timestamp      string  `json:"timestamp"`
+	SubmittedBy    string  `json:"submitted_by"`
+	OffChainURI    string  `json:"off_chain_uri"`
+	VotingDeadline string  `json:"voting_deadline"` // RFC3339, set at submission
+	Status         string  `json:"status"`          // PENDING | FINAL | REJECTED | EXPIRED
+	Votes          []Vote  `json:"votes"`
+	FinalizedBy    string  `json:"finalized_by,omitempty" metadata:",optional"`
+	FinalizedAt    string  `json:"finalized_at,omitempty" metadata:",optional"`
 }
 
 // RegisteredOrg is a stakeholder organisation enrolled on-chain.
@@ -58,14 +84,27 @@ type RegisteredOrg struct {
 	RegisteredAt string `json:"registered_at"`
 }
 
+// OrgAdmissionRequest is a candidate organisation's request for Tier-2
+// stakeholder status, voted on by existing registered orgs.
+type OrgAdmissionRequest struct {
+	CandidateMSP string `json:"candidate_msp"`
+	OrgName      string `json:"org_name"`
+	OrgType      string `json:"org_type"` // "fact-checker" | "media-monitor" | "ngo"
+	RequestedAt  string `json:"requested_at"`
+	Votes        []Vote `json:"votes"`
+	Status       string `json:"status"` // PENDING | ADMITTED | REJECTED
+	FinalizedBy  string `json:"finalized_by,omitempty" metadata:",optional"`
+	FinalizedAt  string `json:"finalized_at,omitempty" metadata:",optional"`
+}
+
 // MisinformationContract provides the chaincode functions.
 type MisinformationContract struct {
 	contractapi.Contract
 }
 
-// newReportKey returns the composite ledger key for (language, row_id).
-func newReportKey(ctx contractapi.TransactionContextInterface, language, rowID string) (string, error) {
-	return ctx.GetStub().CreateCompositeKey("pred", []string{language, rowID})
+// newReportKey returns the composite ledger key for a report.
+func newReportKey(ctx contractapi.TransactionContextInterface, reportID string) (string, error) {
+	return ctx.GetStub().CreateCompositeKey("pred", []string{reportID})
 }
 
 // newOrgKey returns the composite ledger key for an enrolled organisation.
@@ -74,14 +113,19 @@ func newOrgKey(ctx contractapi.TransactionContextInterface, mspid string) (strin
 }
 
 // newVoteKey returns the composite ledger key for one org's vote on a report.
-func newVoteKey(ctx contractapi.TransactionContextInterface, language, rowID, mspid string) (string, error) {
-	return ctx.GetStub().CreateCompositeKey("vote", []string{language, rowID, mspid})
+func newVoteKey(ctx contractapi.TransactionContextInterface, reportID, mspid string) (string, error) {
+	return ctx.GetStub().CreateCompositeKey("vote", []string{reportID, mspid})
+}
+
+// newAdmissionKey returns the composite ledger key for an org admission request.
+func newAdmissionKey(ctx contractapi.TransactionContextInterface, mspid string) (string, error) {
+	return ctx.GetStub().CreateCompositeKey("admission", []string{mspid})
 }
 
 // validateReportInput normalises and checks a report's core fields.
-func validateReportInput(rowID, language, contentHash, label, modelVersion, timestamp string, confidence float64) error {
-	if strings.TrimSpace(rowID) == "" {
-		return fmt.Errorf("row_id must not be empty")
+func validateReportInput(reportID, language, contentHash, label, modelVersion, timestamp string, confidence float64) error {
+	if strings.TrimSpace(reportID) == "" {
+		return fmt.Errorf("report_id must not be empty")
 	}
 	if language != "nso" && language != "zul" && language != "eng" {
 		return fmt.Errorf("language must be one of nso/zul/eng, got %q", language)
@@ -154,8 +198,10 @@ func quorumFor(registeredCount int) int {
 	return (2*registeredCount + 2) / 3
 }
 
-// RegisterOrg enrolls the calling organisation as a stakeholder.
-// Idempotent: re-registering is a no-op. Returns the registered MSPID.
+// RegisterOrg enrolls the calling organisation as a stakeholder during the
+// genesis bootstrap window only. Idempotent (re-registering is a no-op).
+// Once foundingOrgLimit orgs are registered, new orgs must use
+// RequestOrgAdmission. Returns the registered MSPID.
 func (c *MisinformationContract) RegisterOrg(
 	ctx contractapi.TransactionContextInterface,
 ) (string, error) {
@@ -174,6 +220,18 @@ func (c *MisinformationContract) RegisterOrg(
 	if exists != nil {
 		return mspid, nil
 	}
+
+	orgs, err := c.getRegisteredOrgs(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(orgs) >= foundingOrgLimit {
+		return "", fmt.Errorf(
+			"genesis bootstrap closed (%d founding orgs already set); call RequestOrgAdmission instead",
+			foundingOrgLimit,
+		)
+	}
+
 	org := RegisteredOrg{
 		MSPID:        mspid,
 		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
@@ -195,63 +253,56 @@ func (c *MisinformationContract) ListRegisteredOrgs(
 	return c.getRegisteredOrgs(ctx)
 }
 
-// SubmitReport creates a PENDING report awaiting stakeholder votes.
-// Only a registered organisation may submit.
-func (c *MisinformationContract) SubmitReport(
+// RequestOrgAdmission creates a PENDING Tier-2 admission request for the calling
+// org. Requires the caller to be a channel member (Tier-1) but not yet registered.
+func (c *MisinformationContract) RequestOrgAdmission(
 	ctx contractapi.TransactionContextInterface,
-	rowID, language, contentHash, label string,
-	confidence float64,
-	modelVersion, timestamp string,
-) error {
-	if err := validateReportInput(rowID, language, contentHash, label, modelVersion, timestamp, confidence); err != nil {
-		return err
+	orgName, orgType string,
+) (string, error) {
+	mspid, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return "", fmt.Errorf("failed to read caller MSP: %v", err)
+	}
+	if ok, err := c.isRegisteredOrg(ctx, mspid); err != nil {
+		return "", err
+	} else if ok {
+		return "", fmt.Errorf("org %s is already a registered stakeholder", mspid)
+	}
+	if strings.TrimSpace(orgName) == "" {
+		return "", fmt.Errorf("org_name must not be empty")
 	}
 
-	submittedBy, err := ctx.GetClientIdentity().GetMSPID()
+	key, err := newAdmissionKey(ctx, mspid)
 	if err != nil {
-		return fmt.Errorf("failed to read caller MSP: %v", err)
-	}
-	if ok, err := c.isRegisteredOrg(ctx, submittedBy); err != nil {
-		return err
-	} else if !ok {
-		return fmt.Errorf("org %s is not a registered stakeholder; call RegisterOrg first", submittedBy)
-	}
-
-	key, err := newReportKey(ctx, language, rowID)
-	if err != nil {
-		return fmt.Errorf("failed to build key: %v", err)
+		return "", fmt.Errorf("failed to build admission key: %v", err)
 	}
 	if exists, _ := ctx.GetStub().GetState(key); exists != nil {
-		return fmt.Errorf("report for %s/%s already exists (immutable once finalised)", language, rowID)
+		return "", fmt.Errorf("admission request for %s already exists", mspid)
 	}
 
-	record := ReportRecord{
-		RowID:         rowID,
-		Language:      language,
-		ContentHash:   contentHash,
-		ProposedLabel: label,
-		Confidence:    confidence,
-		ModelVersion:  modelVersion,
-		Timestamp:     timestamp,
-		SubmittedBy:   submittedBy,
-		Status:        statusPending,
-		Votes:         []Vote{},
+	req := OrgAdmissionRequest{
+		CandidateMSP: mspid,
+		OrgName:      orgName,
+		OrgType:      orgType,
+		RequestedAt:  time.Now().UTC().Format(time.RFC3339),
+		Votes:        []Vote{},
+		Status:       admissionPending,
 	}
-	recordBytes, err := json.Marshal(record)
+	reqBytes, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("failed to marshal record: %v", err)
+		return "", fmt.Errorf("failed to marshal admission: %v", err)
 	}
-	if err := ctx.GetStub().PutState(key, recordBytes); err != nil {
-		return fmt.Errorf("failed to write record: %v", err)
+	if err := ctx.GetStub().PutState(key, reqBytes); err != nil {
+		return "", fmt.Errorf("failed to write admission: %v", err)
 	}
-	return nil
+	return mspid, nil
 }
 
-// CastVote records one organisation's verdict on a PENDING report.
-// Each org votes once. Verdict is "accept" or "reject".
-func (c *MisinformationContract) CastVote(
+// VoteOnOrgAdmission records one registered org's verdict on a PENDING admission
+// request. Each registered org votes once per candidate.
+func (c *MisinformationContract) VoteOnOrgAdmission(
 	ctx contractapi.TransactionContextInterface,
-	language, rowID, verdict string,
+	candidateMSP, verdict string,
 ) error {
 	if verdict != "accept" && verdict != "reject" {
 		return fmt.Errorf("verdict must be \"accept\" or \"reject\", got %q", verdict)
@@ -267,7 +318,217 @@ func (c *MisinformationContract) CastVote(
 		return fmt.Errorf("org %s is not a registered stakeholder; call RegisterOrg first", voterMSP)
 	}
 
-	key, err := newReportKey(ctx, language, rowID)
+	key, err := newAdmissionKey(ctx, candidateMSP)
+	if err != nil {
+		return fmt.Errorf("failed to build admission key: %v", err)
+	}
+	reqBytes, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return fmt.Errorf("failed to read admission: %v", err)
+	}
+	if reqBytes == nil {
+		return fmt.Errorf("no admission request for %s", candidateMSP)
+	}
+	var req OrgAdmissionRequest
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		return fmt.Errorf("failed to unmarshal admission: %v", err)
+	}
+	if req.Status != admissionPending {
+		return fmt.Errorf("admission for %s is already %s", candidateMSP, req.Status)
+	}
+	if candidateMSP == voterMSP {
+		return fmt.Errorf("a candidate cannot vote on its own admission")
+	}
+	for _, v := range req.Votes {
+		if v.VoterMSP == voterMSP {
+			return fmt.Errorf("org %s already voted on %s's admission", voterMSP, candidateMSP)
+		}
+	}
+
+	txID := ctx.GetStub().GetTxID()
+	req.Votes = append(req.Votes, Vote{VoterMSP: voterMSP, Verdict: verdict, TxID: txID})
+	reqBytes, err = json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal admission: %v", err)
+	}
+	if err := ctx.GetStub().PutState(key, reqBytes); err != nil {
+		return fmt.Errorf("failed to update admission: %v", err)
+	}
+	return nil
+}
+
+// FinalizeOrgAdmission locks a PENDING admission once >= 2/3 of currently
+// registered orgs have voted, admitting (or rejecting) the candidate.
+func (c *MisinformationContract) FinalizeOrgAdmission(
+	ctx contractapi.TransactionContextInterface,
+	candidateMSP string,
+) (string, error) {
+	finalizerMSP, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return "", fmt.Errorf("failed to read caller MSP: %v", err)
+	}
+	if ok, err := c.isRegisteredOrg(ctx, finalizerMSP); err != nil {
+		return "", err
+	} else if !ok {
+		return "", fmt.Errorf("org %s is not a registered stakeholder; call RegisterOrg first", finalizerMSP)
+	}
+
+	key, err := newAdmissionKey(ctx, candidateMSP)
+	if err != nil {
+		return "", fmt.Errorf("failed to build admission key: %v", err)
+	}
+	reqBytes, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return "", fmt.Errorf("failed to read admission: %v", err)
+	}
+	if reqBytes == nil {
+		return "", fmt.Errorf("no admission request for %s", candidateMSP)
+	}
+	var req OrgAdmissionRequest
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		return "", fmt.Errorf("failed to unmarshal admission: %v", err)
+	}
+	if req.Status != admissionPending {
+		return "", fmt.Errorf("admission for %s is already %s", candidateMSP, req.Status)
+	}
+
+	orgs, err := c.getRegisteredOrgs(ctx)
+	if err != nil {
+		return "", err
+	}
+	quorum := quorumFor(len(orgs))
+	if quorum < 1 {
+		return "", fmt.Errorf("no registered stakeholder orgs; cannot finalise admission")
+	}
+	if len(req.Votes) < quorum {
+		return "", fmt.Errorf(
+			"only %d of %d registered orgs have voted; %d votes required for 2/3 quorum",
+			len(req.Votes), len(orgs), quorum,
+		)
+	}
+
+	accept := 0
+	for _, v := range req.Votes {
+		if v.Verdict == "accept" {
+			accept++
+		}
+	}
+	req.FinalizedBy = finalizerMSP
+	req.FinalizedAt = time.Now().UTC().Format(time.RFC3339)
+	if accept >= quorum {
+		req.Status = admissionAdmitted
+		org := RegisteredOrg{MSPID: candidateMSP, RegisteredAt: time.Now().UTC().Format(time.RFC3339)}
+		orgByte, err := json.Marshal(org)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal org: %v", err)
+		}
+		orgKey, err := newOrgKey(ctx, candidateMSP)
+		if err != nil {
+			return "", err
+		}
+		if err := ctx.GetStub().PutState(orgKey, orgByte); err != nil {
+			return "", fmt.Errorf("failed to admit org: %v", err)
+		}
+	} else {
+		req.Status = admissionRejected
+	}
+
+	reqBytes, err = json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal admission: %v", err)
+	}
+	if err := ctx.GetStub().PutState(key, reqBytes); err != nil {
+		return "", fmt.Errorf("failed to write final admission: %v", err)
+	}
+	return candidateMSP, nil
+}
+
+// SubmitReport creates a PENDING report awaiting stakeholder votes.
+// Only a registered organisation may submit. Raw text is not sent — only
+// content_hash plus an off_chain_uri pointing to the full report.
+func (c *MisinformationContract) SubmitReport(
+	ctx contractapi.TransactionContextInterface,
+	reportID, language, contentHash, label string,
+	confidence float64,
+	modelVersion, timestamp, offChainURI string,
+) error {
+	if err := validateReportInput(reportID, language, contentHash, label, modelVersion, timestamp, confidence); err != nil {
+		return err
+	}
+	if strings.TrimSpace(offChainURI) == "" {
+		return fmt.Errorf("off_chain_uri must not be empty")
+	}
+
+	submittedBy, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return fmt.Errorf("failed to read caller MSP: %v", err)
+	}
+	if ok, err := c.isRegisteredOrg(ctx, submittedBy); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("org %s is not a registered stakeholder; call RegisterOrg first", submittedBy)
+	}
+
+	key, err := newReportKey(ctx, reportID)
+	if err != nil {
+		return fmt.Errorf("failed to build key: %v", err)
+	}
+	if exists, _ := ctx.GetStub().GetState(key); exists != nil {
+		return fmt.Errorf("report %s already exists (immutable once finalised)", reportID)
+	}
+
+	// Voting deadline is anchored to the ordering-service-assigned transaction
+	// timestamp so every peer computes an identical deadline (determinism).
+	deadline := time.Now().UTC().Add(votingWindow).Format(time.RFC3339)
+	if txTS, err := ctx.GetStub().GetTxTimestamp(); err == nil && txTS != nil {
+		deadline = txTS.AsTime().Add(votingWindow).UTC().Format(time.RFC3339)
+	}
+
+	record := ReportRecord{
+		ReportID:       reportID,
+		Language:       language,
+		ContentHash:    contentHash,
+		ProposedLabel:  label,
+		Confidence:     confidence,
+		ModelVersion:   modelVersion,
+		Timestamp:      timestamp,
+		SubmittedBy:    submittedBy,
+		OffChainURI:    offChainURI,
+		VotingDeadline: deadline,
+		Status:         statusPending,
+		Votes:          []Vote{},
+	}
+	recordBytes, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal record: %v", err)
+	}
+	if err := ctx.GetStub().PutState(key, recordBytes); err != nil {
+		return fmt.Errorf("failed to write record: %v", err)
+	}
+	return nil
+}
+
+// CastVote records one organisation's verdict on a PENDING report.
+// Each org votes once. Verdict is "accept" or "reject".
+func (c *MisinformationContract) CastVote(
+	ctx contractapi.TransactionContextInterface,
+	reportID, verdict string,
+) error {
+	if verdict != "accept" && verdict != "reject" {
+		return fmt.Errorf("verdict must be \"accept\" or \"reject\", got %q", verdict)
+	}
+
+	voterMSP, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return fmt.Errorf("failed to read caller MSP: %v", err)
+	}
+	if ok, err := c.isRegisteredOrg(ctx, voterMSP); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("org %s is not a registered stakeholder; call RegisterOrg first", voterMSP)
+	}
+
+	key, err := newReportKey(ctx, reportID)
 	if err != nil {
 		return fmt.Errorf("failed to build key: %v", err)
 	}
@@ -276,22 +537,22 @@ func (c *MisinformationContract) CastVote(
 		return fmt.Errorf("failed to read state: %v", err)
 	}
 	if recordBytes == nil {
-		return fmt.Errorf("no report found for %s/%s", language, rowID)
+		return fmt.Errorf("no report found for %s", reportID)
 	}
 	var record ReportRecord
 	if err := json.Unmarshal(recordBytes, &record); err != nil {
 		return fmt.Errorf("failed to unmarshal record: %v", err)
 	}
 	if record.Status != statusPending {
-		return fmt.Errorf("report %s/%s is %s; votes are closed", language, rowID, record.Status)
+		return fmt.Errorf("report %s is %s; votes are closed", reportID, record.Status)
 	}
 
-	voteKey, err := newVoteKey(ctx, language, rowID, voterMSP)
+	voteKey, err := newVoteKey(ctx, reportID, voterMSP)
 	if err != nil {
 		return fmt.Errorf("failed to build vote key: %v", err)
 	}
 	if exists, _ := ctx.GetStub().GetState(voteKey); exists != nil {
-		return fmt.Errorf("org %s already voted on %s/%s", voterMSP, language, rowID)
+		return fmt.Errorf("org %s already voted on %s", voterMSP, reportID)
 	}
 
 	txID := ctx.GetStub().GetTxID()
@@ -315,11 +576,12 @@ func (c *MisinformationContract) CastVote(
 	return nil
 }
 
-// FinalizeReport locks a PENDING report into a FINAL or REJECTED record once
-// >= 2/3 of registered orgs have voted. After this the record is immutable.
+// FinalizeReport locks a PENDING report into FINAL or REJECTED once >= 2/3 of
+// registered orgs have voted. If called after the voting deadline without
+// quorum, the report is auto-marked EXPIRED. After this the record is immutable.
 func (c *MisinformationContract) FinalizeReport(
 	ctx contractapi.TransactionContextInterface,
-	language, rowID string,
+	reportID string,
 ) error {
 	finalizerMSP, err := ctx.GetClientIdentity().GetMSPID()
 	if err != nil {
@@ -331,7 +593,7 @@ func (c *MisinformationContract) FinalizeReport(
 		return fmt.Errorf("org %s is not a registered stakeholder; call RegisterOrg first", finalizerMSP)
 	}
 
-	key, err := newReportKey(ctx, language, rowID)
+	key, err := newReportKey(ctx, reportID)
 	if err != nil {
 		return fmt.Errorf("failed to build key: %v", err)
 	}
@@ -340,14 +602,28 @@ func (c *MisinformationContract) FinalizeReport(
 		return fmt.Errorf("failed to read state: %v", err)
 	}
 	if recordBytes == nil {
-		return fmt.Errorf("no report found for %s/%s", language, rowID)
+		return fmt.Errorf("no report found for %s", reportID)
 	}
 	var record ReportRecord
 	if err := json.Unmarshal(recordBytes, &record); err != nil {
 		return fmt.Errorf("failed to unmarshal record: %v", err)
 	}
 	if record.Status != statusPending {
-		return fmt.Errorf("report %s/%s is already %s", language, rowID, record.Status)
+		return fmt.Errorf("report %s is already %s", reportID, record.Status)
+	}
+
+	// Auto-expire if the voting window has closed with no decision (v2 §3.2).
+	if expired, err := isPastDeadline(record.VotingDeadline); err != nil {
+		return err
+	} else if expired {
+		record.Status = statusExpired
+		record.FinalizedBy = finalizerMSP
+		record.FinalizedAt = time.Now().UTC().Format(time.RFC3339)
+		recordBytes, err = json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("failed to marshal record: %v", err)
+		}
+		return ctx.GetStub().PutState(key, recordBytes)
 	}
 
 	orgs, err := c.getRegisteredOrgs(ctx)
@@ -387,12 +663,76 @@ func (c *MisinformationContract) FinalizeReport(
 	return nil
 }
 
-// QueryReport returns the record for a (language, row_id).
+// ExpireReport marks a PENDING report EXPIRED once its voting deadline passes.
+// Rejected (error) if called before the deadline or on a non-PENDING report.
+func (c *MisinformationContract) ExpireReport(
+	ctx contractapi.TransactionContextInterface,
+	reportID string,
+) error {
+	finalizerMSP, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return fmt.Errorf("failed to read caller MSP: %v", err)
+	}
+	if ok, err := c.isRegisteredOrg(ctx, finalizerMSP); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("org %s is not a registered stakeholder; call RegisterOrg first", finalizerMSP)
+	}
+
+	key, err := newReportKey(ctx, reportID)
+	if err != nil {
+		return fmt.Errorf("failed to build key: %v", err)
+	}
+	recordBytes, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return fmt.Errorf("failed to read state: %v", err)
+	}
+	if recordBytes == nil {
+		return fmt.Errorf("no report found for %s", reportID)
+	}
+	var record ReportRecord
+	if err := json.Unmarshal(recordBytes, &record); err != nil {
+		return fmt.Errorf("failed to unmarshal record: %v", err)
+	}
+	if record.Status != statusPending {
+		return fmt.Errorf("report %s is %s; only PENDING reports can expire", reportID, record.Status)
+	}
+	expired, err := isPastDeadline(record.VotingDeadline)
+	if err != nil {
+		return err
+	}
+	if !expired {
+		return fmt.Errorf("report %s is still within its voting window (deadline %s)", reportID, record.VotingDeadline)
+	}
+
+	record.Status = statusExpired
+	record.FinalizedBy = finalizerMSP
+	record.FinalizedAt = time.Now().UTC().Format(time.RFC3339)
+	recordBytes, err = json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal record: %v", err)
+	}
+	if err := ctx.GetStub().PutState(key, recordBytes); err != nil {
+		return fmt.Errorf("failed to write expired record: %v", err)
+	}
+	return nil
+}
+
+// isPastDeadline reports whether an RFC3339 deadline is before now.
+func isPastDeadline(rfc3339 string) (bool, error) {
+	deadline, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return false, fmt.Errorf("invalid voting_deadline %q: %v", rfc3339, err)
+	}
+	return time.Now().UTC().After(deadline), nil
+}
+
+// QueryReport returns the record for a report_id.
 func (c *MisinformationContract) QueryReport(
 	ctx contractapi.TransactionContextInterface,
-	language, rowID string,
+	reportID string,
 ) (*ReportRecord, error) {
-	key, err := newReportKey(ctx, language, rowID)
+	key, err := newReportKey(ctx, reportID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build key: %v", err)
 	}
@@ -401,7 +741,7 @@ func (c *MisinformationContract) QueryReport(
 		return nil, fmt.Errorf("failed to read state: %v", err)
 	}
 	if recordBytes == nil {
-		return nil, fmt.Errorf("no report found for %s/%s", language, rowID)
+		return nil, fmt.Errorf("no report found for %s", reportID)
 	}
 	var record ReportRecord
 	if err := json.Unmarshal(recordBytes, &record); err != nil {
@@ -457,9 +797,9 @@ func (c *MisinformationContract) GetReportCount(
 // QueryVotes returns all votes cast on a report.
 func (c *MisinformationContract) QueryVotes(
 	ctx contractapi.TransactionContextInterface,
-	language, rowID string,
+	reportID string,
 ) ([]*Vote, error) {
-	iter, err := ctx.GetStub().GetStateByPartialCompositeKey("vote", []string{language, rowID})
+	iter, err := ctx.GetStub().GetStateByPartialCompositeKey("vote", []string{reportID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open vote query: %v", err)
 	}
@@ -480,13 +820,36 @@ func (c *MisinformationContract) QueryVotes(
 	return votes, nil
 }
 
+// QueryOrgAdmission returns the admission request for a candidate MSP.
+func (c *MisinformationContract) QueryOrgAdmission(
+	ctx contractapi.TransactionContextInterface,
+	candidateMSP string,
+) (*OrgAdmissionRequest, error) {
+	key, err := newAdmissionKey(ctx, candidateMSP)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build admission key: %v", err)
+	}
+	reqBytes, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read admission: %v", err)
+	}
+	if reqBytes == nil {
+		return nil, fmt.Errorf("no admission request for %s", candidateMSP)
+	}
+	var req OrgAdmissionRequest
+	if err := json.Unmarshal(reqBytes, &req); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal admission: %v", err)
+	}
+	return &req, nil
+}
+
 // QueryReportHistory returns the full ledger history (prior values) of a key,
-// proving the tamper-evident audit trail for (language, row_id).
+// proving the tamper-evident audit trail for a report_id.
 func (c *MisinformationContract) QueryReportHistory(
 	ctx contractapi.TransactionContextInterface,
-	language, rowID string,
+	reportID string,
 ) ([]string, error) {
-	key, err := newReportKey(ctx, language, rowID)
+	key, err := newReportKey(ctx, reportID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build key: %v", err)
 	}

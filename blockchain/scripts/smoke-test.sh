@@ -19,12 +19,13 @@ CC="misinformation"
 
 # Sample values (a stable sha256 of "misinformation audit test row")
 HASH="4f4d1a9c9c7c2f5e8f5b6c3d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f"
-ROW_ID="test-row-$(date +%s)"
+REPORT_ID="test-report-$(date +%s)"
 LANGUAGE="nso"
 LABEL="1"
 CONFIDENCE="0.97"
 MODEL="afroxlmr-large-nso-v1.0"
 TS="2025-01-01T00:00:00Z"
+OFF_URI="http://localhost:8000/api/reports/${REPORT_ID}"
 VERDICT="accept"
 
 export PATH="${TEST_NETWORK}/../bin:${PATH}"
@@ -101,23 +102,23 @@ query ListRegisteredOrgs
 
 echo "==> SubmitReport (org1 signs)"
 use_org org1
-invoke SubmitReport "${ROW_ID}" "${LANGUAGE}" "${HASH}" "${LABEL}" "${CONFIDENCE}" "${MODEL}" "${TS}"
+invoke SubmitReport "${REPORT_ID}" "${LANGUAGE}" "${HASH}" "${LABEL}" "${CONFIDENCE}" "${MODEL}" "${TS}" "${OFF_URI}"
 
 echo "==> CastVote accept (org1)"
-invoke CastVote "${LANGUAGE}" "${ROW_ID}" "${VERDICT}"
+invoke CastVote "${REPORT_ID}" "${VERDICT}"
 
 echo "==> CastVote accept (org2)"
 use_org org2
-invoke CastVote "${LANGUAGE}" "${ROW_ID}" "${VERDICT}"
+invoke CastVote "${REPORT_ID}" "${VERDICT}"
 
 echo "==> FinalizeReport (org2) — 2/2 registered orgs have voted -> FINAL"
-invoke FinalizeReport "${LANGUAGE}" "${ROW_ID}"
+invoke FinalizeReport "${REPORT_ID}"
 
 echo "==> Query Report"
-query QueryReport "${LANGUAGE}" "${ROW_ID}"
+query QueryReport "${REPORT_ID}"
 
 echo "==> Query Votes"
-query QueryVotes "${LANGUAGE}" "${ROW_ID}"
+query QueryVotes "${REPORT_ID}"
 
 echo "==> Query All Reports"
 query QueryAllReports
@@ -126,7 +127,7 @@ echo "==> Report Count"
 query GetReportCount
 
 echo "==> Query Report History"
-query QueryReportHistory "${LANGUAGE}" "${ROW_ID}"
+query QueryReportHistory "${REPORT_ID}"
 
 echo
 echo "Smoke test complete."

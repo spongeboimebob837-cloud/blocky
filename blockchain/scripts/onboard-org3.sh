@@ -19,7 +19,7 @@ TEST_NETWORK="${FABRIC_SAMPLES:-${HOME}/fabric-samples}/test-network"
 ADD_ORG3="${TEST_NETWORK}/addOrg3"
 
 CC_NAME="misinformation"
-CC_VERSION="1.1"
+CC_VERSION="2.1"
 CC_SEQUENCE="2"
 CHANNEL_NAME="mychannel"
 POLICY="OutOf(2, 'Org1MSP.member','Org2MSP.member','Org3MSP.member')"
