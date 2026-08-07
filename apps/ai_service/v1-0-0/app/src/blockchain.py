@@ -248,3 +248,73 @@ def _rfc3339_now() -> str:
     import datetime as _dt
 
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --------------------------------------------------------------------------- #
+# Thin CLI so FabricBridge stays a reusable, documented entry point instead of
+# being reachable only from throwaway heredocs. Examples:
+#
+#   python -m blockchain register-org org1
+#   python -m blockchain register-org org1 org2 org3 --endorsers org1,org2
+#   python -m blockchain list-orgs
+#   python -m blockchain register-all            # org1 org2 org3
+# --------------------------------------------------------------------------- #
+def _cli_main(argv: Optional[Sequence[str]] = None) -> int:
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="python -m blockchain",
+        description="Interact with the misinformation chaincode via the peer CLI.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    reg = sub.add_parser("register-org", help="self-register org(s) during the genesis bootstrap")
+    reg.add_argument("orgs", nargs="+", help="org1/org2/org3 ...")
+    reg.add_argument("--endorsers", default="org1,org2",
+                     help="comma-separated endorsing peers (default org1,org2)")
+
+    sub.add_parser("register-all", help="register org1, org2, org3")
+
+    ls = sub.add_parser("list-orgs", help="list registered stakeholder orgs")
+    ls.add_argument("--org", default="org1")
+
+    args = parser.parse_args(argv)
+
+    if args.command == "register-org":
+        endorsers = [e.strip() for e in args.endorsers.split(",") if e.strip()]
+        for org in args.orgs:
+            try:
+                out = FabricBridge(org=org, endorsers=endorsers).register_org()
+                print(f"registered {org}: {out}")
+            except RuntimeError as exc:
+                print(f"register {org} failed: {exc}", file=sys.stderr)
+                return 1
+        return 0
+
+    if args.command == "register-all":
+        for org in ("org1", "org2", "org3"):
+            try:
+                out = FabricBridge(org=org, endorsers=["org1", "org2"]).register_org()
+                print(f"registered {org}: {out}")
+            except RuntimeError as exc:
+                print(f"register {org} failed: {exc}", file=sys.stderr)
+                return 1
+        return 0
+
+    if args.command == "list-orgs":
+        try:
+            print(json.dumps(FabricBridge(org=args.org).list_orgs(), indent=2))
+        except RuntimeError as exc:
+            print(f"list-orgs failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    _sys.exit(_cli_main())

@@ -1,4 +1,4 @@
-Update v1:
+<!-- Update v1:
 
 # Project Status — Blockchain-Enabled Framework for Misinformation Monitoring
 
@@ -198,7 +198,7 @@ go test ./...      # registration, submit/query, validation, vote->finalize, quo
 2. Demo: wire `submit_pipeline_output` into the eval notebook to anchor real
    predictions, then show the vote→finalize flow with all registered orgs.
 3. Optional for dissertation depth: richer chaincode queries (by label /
-   language), or a 4th org to demonstrate quorum scaling (2/3 rule is dynamic).
+   language), or a 4th org to demonstrate quorum scaling (2/3 rule is dynamic). -->
 
 Updates v2:
 
@@ -216,10 +216,10 @@ maps every section here onto specific roadmap phases so the two documents stay i
 | Question | Decision | Why (short version) |
 |---|---|---|
 | CouchDB or LevelDB? | **CouchDB** | Rich JSON queries (status/language/confidence/time filters) without hand-building composite-key indexes for every new filter you'll want for the API and public explorer |
-| Where does the full report live? | **Off-chain, in a backend DB behind your API server** (not IPFS, not on-chain) | Simplest reliable option for a project timeline; IPFS noted as an optional stretch upgrade |
+| Where does the full report live? | **Off-chain — IPFS by default** (`ipfs://<CID>`), SQLite fallback; never on-chain | Blockchain-native URI with a graceful no-infra fallback; the ledger only ever stores the hash + URI |
 | How do orgs connect? | **REST API gateway wrapping the existing `FabricBridge`**, orgs authenticate with an API key issued at sign-up, never touch `peer` CLI directly | Matches your stated goal directly; keeps your already-working CLI-shell-out transport instead of a risky mid-project SDK rewrite |
 | How is "verified stakeholder" actually enforced? | **Two tiers**: Fabric channel membership (hard, requires real admission process) + an on-chain org-admission **vote** (reuses your existing 2/3 quorum machinery) | Currently `RegisterOrg` is self-service with zero vetting — this closes that gap using infrastructure you've already built |
-| How is public transparency reconciled with permissioning? | **Hyperledger Explorer**, deployed with one read-only Fabric identity, public-facing web UI | Writes stay permissioned (chaincode-enforced); reads become public without giving the public a Fabric identity of their own |
+| How is public transparency reconciled with permissioning? | **Read-only query endpoints** behind the API gateway (status/language filters) — the read-only Fabric identity path; Hyperledger Explorer was evaluated then removed (`explorer/` deleted in a later cleanup) | Writes stay permissioned (chaincode-enforced); reads are served by the gateway without giving the public a Fabric identity of their own |
 | How do you test with real data? | **Your own held-out test set first, then genuinely new out-of-sample scraped data** | You already have real predictions sitting in `held_out_test_set.csv` — use them before reaching for anything external |
 
 ---
@@ -449,18 +449,21 @@ nothing calls `ExpireReport` on its own. Add a small scheduled job in your API s
 `ExpireReport` for each. `APScheduler` (Python) or a simple cron container both work
 fine at this scale.
 
-### 3.4 Off-chain storage — recommendation and steps
-For a project timeline, don't reach for IPFS first — it adds pinning/availability
-complexity that isn't the point of this project. Recommended:
-- [ ] A Postgres table (or SQLite if you want zero extra infrastructure):
-  `reports(report_id TEXT PRIMARY KEY, payload JSONB, content_hash TEXT, created_at TIMESTAMP)`.
-- [ ] `off_chain_uri` on-chain is just an API URL: `https://<your-server>/api/reports/{report_id}`.
-- [ ] `GET /api/reports/{report_id}` returns the full JSON — this endpoint can be public
-  or permissioned depending on how you want to handle §5's transparency goal (see §5.3).
-- [ ] **Optional stretch, not required for the core deliverable**: swap the Postgres
-  table for IPFS (`off_chain_uri` becomes an `ipfs://<CID>` reference) if you want a more
-  "blockchain-native" transparency story for the dissertation — note this in your
-  limitations/future-work section either way, since reviewers may ask why you didn't.
+### 3.4 Off-chain storage — decision and steps (implemented)
+The gateway stores full Report objects (raw text included) **off-chain**; the
+ledger holds only the hash + `off_chain_uri`. Implemented with a **pluggable
+backend** (`app/api/storage.py`):
+- [x] **IPFS is the default backend.** Reports are added to a local `ipfs/kubo`
+  node (Docker) and `off_chain_uri` becomes `ipfs://<CID>` — a blockchain-native
+  transparency story. Start it with `blockchain/scripts/start-ipfs.sh`.
+- [x] **SQLite fallback.** If the IPFS node is unreachable, the payload is kept
+  in SQLite and the URI falls back to the API URL, so the pipeline stays
+  testable without IPFS. `GET /api/status` reports the active backend.
+- [x] `GET /api/reports/{report_id}` resolves from IPFS (or the local copy) and
+  returns the full JSON — this endpoint can be public or permissioned depending
+  on how you want to handle §5's transparency goal (see §5.3).
+- [x] **API keys** (`org_keys`) always live in SQLite; bootstrap with
+  `blockchain/scripts/bootstrap-keys.sh`.
 
 ### 3.5 Steps summary
 1. Extend `ReportRecord` + `SubmitReport` signature (Go) — `off_chain_uri`,
@@ -577,38 +580,27 @@ a stakeholder org, so it can query but never gets past `isRegisteredOrg` checks 
 someone tried to misuse it for writes — though for true safety, front it with an explorer
 tool that only ever issues query calls, never invokes).
 
-### 5.2 Recommended: Hyperledger Explorer
-- [ ] Deploy [Hyperledger Explorer](https://github.com/hyperledger/blockchain-explorer)
-  (official Fabric tooling — good to cite directly in your dissertation as an
-  established tool rather than something you built from scratch, which strengthens
-  credibility) against your channel.
-- [ ] Configure it with **one dedicated read-only connection profile** (its own MSP
-  identity, enrolled via your Fabric CA, that is a channel member but never calls
-  `RegisterOrg`).
-- [ ] Host the Explorer web UI on a public-facing address (or at minimum, demo-accessible
-  during your viva) — it gives block-by-block, transaction-by-transaction browsing out
-  of the box, no custom frontend work needed.
-- [ ] Explorer shows raw ledger contents (composite keys, JSON values) — since your
-  on-chain data never includes raw text (only hashes + off-chain URIs), this is safe to
-  expose publicly by design; you don't need to redact anything.
+### 5.2 Evaluated but removed: Hyperledger Explorer
+[Hyperledger Explorer](https://github.com/hyperledger/blockchain-explorer) was
+briefly considered and the configuration was committed, then **removed** (see
+the cleanup commit deleting `blockchain/explorer/`). It was heavier than the
+remaining timeline justified. The design principle survives:
+- Writes stay permissioned (chaincode-enforced); reads become public without
+  giving the public a Fabric identity of their own.
+- On-chain data never includes raw text (only hashes + `off_chain_uri`), so
+  exposing ledger contents needs no redaction by design.
 
-### 5.3 Alternative/complement: a thin custom public dashboard
-If Explorer proves heavier to stand up than your remaining time allows, or you want a
-more tailored public view (e.g., a simple "here's what's been fact-checked this week"
-page rather than raw ledger browsing):
-- [ ] Reuse the read-only query endpoints from your API (§4.3's `GET` routes) with no
-  auth required, backed by the same read-only Fabric identity.
-- [ ] A simple static HTML page (or the same lightweight frontend from Phase 7.2) listing
-  FINAL/REJECTED reports, their verdicts, and links to the full off-chain report (minus
-  anything you decide shouldn't be public — though per your data model, there's nothing
-  sensitive on-chain to begin with).
-- [ ] This is strictly less impressive from a "we used real blockchain tooling"
-  standpoint than Explorer, but is lower-risk to get working reliably by a deadline —
-  worth having as a fallback even if Explorer is your primary plan.
-
-**Recommendation:** attempt Explorer first (better dissertation citation, less custom
-code to maintain), keep the custom dashboard as a documented fallback plan, not
-something you necessarily build in parallel unless time allows.
+### 5.3 Implemented instead: read-only gateway endpoints
+The gateway serves the transparency story today:
+- [x] Reuse the read-only query endpoints from the API (§4.3's `GET` routes),
+  backed by the same read-only Fabric identity path.
+- [x] `GET /api/reports` supports `?status=` / `?language=` filtering (CouchDB
+  rich queries or in-memory filtering per §4.3).
+- [x] `GET /api/reports/{id}/verify` proves the off-chain copy matches the
+  on-chain hash — the concrete tamper-evidence demo.
+- [ ] Optional stretch: a thin static dashboard page listing FINAL/REJECTED
+  reports and their verdicts. Not required for the core deliverable; revisit if
+  time allows.
 
 ---
 

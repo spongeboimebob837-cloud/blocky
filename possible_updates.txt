@@ -1,0 +1,7 @@
+1.) Implement ipfs for off chain storage instead
+3.) make 3 orgs defualt creation in deploy
+Onbaordiung org 3 does not qorkj cannot find keys
+4.) turn bootstrpa api key in shell script (how is onborading done?, where are the keys?)
+5.) Step 6.5 - Register the two orgs on the ledger, shoould eb shell script or some way automated
+6.) i feel like the reghistering of org should be like a function that is resusabel? not once off shell scripts
+I get oince bootstrpa is up then we ca confirm all tetsing is good but still

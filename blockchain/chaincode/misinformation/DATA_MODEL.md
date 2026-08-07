@@ -29,7 +29,7 @@ Written for the dissertation's blockchain section.
 | `submitted_by`   | string   | MSP ID of the submitting organisation (from tx context)        |
 | `off_chain_uri`  | string   | URL to the full off-chain report (raw text lives there, never on-chain) |
 | `voting_deadline`| string   | RFC 3339 UTC; submission tx-time + 72h (deterministic per peer) |
-| `status`         | string   | `PENDING` → `FINAL`, `REJECTED`, or `EXPIRED`                  |
+| `status`         | string   | `PENDING` → `FINAL`, `REJECTED`, or `EXPIREcD`                  |
 | `votes`          | Vote[]   | Each stakeholder org's `{voter_msp, verdict, txid}`            |
 | `finalized_by`   | string   | MSP that ran `FinalizeReport`/`ExpireReport`                   |
 | `finalized_at`   | string   | RFC 3339 time finalised / expired                              |

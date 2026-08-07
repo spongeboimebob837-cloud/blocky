@@ -42,6 +42,13 @@ Requires the gateway running and an API key (see below).
 
 ```bash
 pip install -r apps/ai_service/v1-0-0/app/api/requirements.txt
+
+# optional: off-chain reports go to a local IPFS node (falls back to SQLite)
+blockchain/scripts/start-ipfs.sh
+
+# mint the first API keys (chicken-and-egg: /api/orgs/apply needs a key already)
+blockchain/scripts/bootstrap-keys.sh org1 org2 org3
+
 cd apps/ai_service/v1-0-0/app/api
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
@@ -55,6 +62,7 @@ Endpoints (auth: `X-API-Key` header):
 | POST | `/api/orgs/{msp}/admission/vote` | Vote accept/reject on an applicant |
 | POST | `/api/orgs/{msp}/admission/finalize` | Finalize an admission |
 | GET  | `/api/orgs` | List registered stakeholder orgs |
+| GET  | `/api/status` | Active off-chain storage backend (IPFS or SQLite fallback) |
 | POST | `/api/reports` | Store off-chain + hash + SubmitReport |
 | GET  | `/api/reports/{id}` | Fetch full off-chain report |
 | GET  | `/api/reports/{id}/chain` | On-chain record (QueryReport) |
@@ -68,12 +76,12 @@ Endpoints (auth: `X-API-Key` header):
 The gateway also runs a **scheduled expiry job** (v2 §3.3) that marks overdue
 PENDING reports EXPIRED (chaincode is purely reactive and can't run timers itself).
 
-## Off-chain storage (v2 §3.4)
+## Off-chain storage (v2 §3.4, implemented)
 
-Full report objects (including raw text) are stored in a local SQLite database
-(`app/api/offchain.db`); on-chain only the hash + `off_chain_uri` are stored. Swap
-for Postgres/IPFS if you outgrow SQLite (documented as optional stretch in
-`updates` v2 §3.4).
+Full report objects (including raw text) are stored off-chain — **IPFS by
+default**, SQLite as a fallback (`app/api/offchain.db`). On-chain only the hash +
+`off_chain_uri` are stored. `off_chain_uri` becomes `ipfs://<CID>` when IPFS is
+available, else the API URL. `GET /api/status` reports the active backend.
 
 ## Checklist (aligns with proposal section 4)
 

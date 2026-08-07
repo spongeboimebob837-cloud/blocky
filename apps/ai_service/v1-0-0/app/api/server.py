@@ -157,6 +157,12 @@ def list_orgs(_org: str = Depends(require_org)):
     return bridge_for(_org).list_orgs()
 
 
+@app.get("/api/status")
+def storage_status(_org: str = Depends(require_org)):
+    """Which off-chain storage backend is active (IPFS or SQLite fallback)."""
+    return STORE.ipfs_status()
+
+
 @app.get("/api/orgs/{msp}/admission")
 def get_admission(msp: str, _org: str = Depends(require_org)):
     return bridge_for(_org).query_admission(msp)
@@ -187,9 +193,7 @@ def create_report(body: ReportCreate, _org: str = Depends(require_org)):
         org_mspid={"org1": "Org1MSP", "org2": "Org2MSP", "org3": "Org3MSP"}[_org],
         submission_type=body.submission_type,
     )
-    STORE.save_report(body.report_id, report)
-
-    uri = f"http://localhost:8000/api/reports/{body.report_id}"
+    uri = STORE.save_report(body.report_id, report)
     bridge = bridge_for(_org)
     bridge.submit_report(
         body.report_id, body.language, report["content_hash"], body.label,

@@ -43,10 +43,12 @@ const (
 	admissionAdmitted = "ADMITTED"
 	admissionRejected = "REJECTED"
 
-	// foundingOrgLimit is the genesis bootstrap window: while fewer than this many
-	// orgs are registered, self-service RegisterOrg is allowed. Once the limit is
-	// reached all new orgs must go through the admission-vote workflow.
-	foundingOrgLimit = 3
+	// defaultFoundingOrgLimit is the genesis bootstrap window: while fewer than
+	// this many orgs are registered, self-service RegisterOrg is allowed. Once the
+	// limit is reached all new orgs must go through the admission-vote workflow.
+	// The limit is stored on-ledger under the `cfg` namespace so a network operator
+	// can raise it for stress testing (SetFoundingOrgLimit); 3 is the default.
+	defaultFoundingOrgLimit = 3
 
 	// votingWindow is how long a PENDING report stays open for votes.
 	votingWindow = 72 * time.Hour
@@ -120,6 +122,57 @@ func newVoteKey(ctx contractapi.TransactionContextInterface, reportID, mspid str
 // newAdmissionKey returns the composite ledger key for an org admission request.
 func newAdmissionKey(ctx contractapi.TransactionContextInterface, mspid string) (string, error) {
 	return ctx.GetStub().CreateCompositeKey("admission", []string{mspid})
+}
+
+// newConfigKey returns the composite ledger key for a chaincode config value.
+func newConfigKey(ctx contractapi.TransactionContextInterface, name string) (string, error) {
+	return ctx.GetStub().CreateCompositeKey("cfg", []string{name})
+}
+
+// foundingOrgLimit reads the on-ledger genesis bootstrap window, defaulting to
+// defaultFoundingOrgLimit when unset.
+func (c *MisinformationContract) foundingOrgLimit(ctx contractapi.TransactionContextInterface) (int, error) {
+	key, err := newConfigKey(ctx, "foundingOrgLimit")
+	if err != nil {
+		return 0, fmt.Errorf("failed to build config key: %v", err)
+	}
+	raw, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read foundingOrgLimit: %v", err)
+	}
+	if raw == nil {
+		return defaultFoundingOrgLimit, nil
+	}
+	var val int
+	if err := json.Unmarshal(raw, &val); err != nil {
+		return 0, fmt.Errorf("failed to parse foundingOrgLimit: %v", err)
+	}
+	return val, nil
+}
+
+// SetFoundingOrgLimit overrides the genesis bootstrap window for stress testing.
+// While fewer than this many orgs are registered, self-service RegisterOrg is
+// allowed; once reached, new orgs must use RequestOrgAdmission. Pass a small
+// number (>= 1) in production; raise it (e.g. 103 for 3 founding + 100 test
+// orgs) to let a simulated swarm self-register.
+func (c *MisinformationContract) SetFoundingOrgLimit(
+	ctx contractapi.TransactionContextInterface, limit int,
+) (int, error) {
+	if limit < 1 {
+		return 0, fmt.Errorf("founding org limit must be >= 1, got %d", limit)
+	}
+	key, err := newConfigKey(ctx, "foundingOrgLimit")
+	if err != nil {
+		return 0, fmt.Errorf("failed to build config key: %v", err)
+	}
+	bytes, err := json.Marshal(limit)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal limit: %v", err)
+	}
+	if err := ctx.GetStub().PutState(key, bytes); err != nil {
+		return 0, fmt.Errorf("failed to write foundingOrgLimit: %v", err)
+	}
+	return limit, nil
 }
 
 // validateReportInput normalises and checks a report's core fields.
@@ -198,6 +251,17 @@ func quorumFor(registeredCount int) int {
 	return (2*registeredCount + 2) / 3
 }
 
+// deterministicTimestamp returns the ordering-service-assigned transaction
+// timestamp formatted as RFC3339 UTC. It is identical on every endorsing peer,
+// so it is safe to write into ledger state. Falls back to the local clock only
+// when the tx timestamp is unavailable (e.g. MockStub without TxTimestamp set).
+func deterministicTimestamp(ctx contractapi.TransactionContextInterface) string {
+	if txTS, err := ctx.GetStub().GetTxTimestamp(); err == nil && txTS != nil {
+		return txTS.AsTime().UTC().Format(time.RFC3339)
+	}
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
 // RegisterOrg enrolls the calling organisation as a stakeholder during the
 // genesis bootstrap window only. Idempotent (re-registering is a no-op).
 // Once foundingOrgLimit orgs are registered, new orgs must use
@@ -225,16 +289,20 @@ func (c *MisinformationContract) RegisterOrg(
 	if err != nil {
 		return "", err
 	}
-	if len(orgs) >= foundingOrgLimit {
+	limit, err := c.foundingOrgLimit(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(orgs) >= limit {
 		return "", fmt.Errorf(
 			"genesis bootstrap closed (%d founding orgs already set); call RequestOrgAdmission instead",
-			foundingOrgLimit,
+			limit,
 		)
 	}
 
 	org := RegisteredOrg{
 		MSPID:        mspid,
-		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
+		RegisteredAt: deterministicTimestamp(ctx),
 	}
 	orgBytes, err := json.Marshal(org)
 	if err != nil {
@@ -284,7 +352,7 @@ func (c *MisinformationContract) RequestOrgAdmission(
 		CandidateMSP: mspid,
 		OrgName:      orgName,
 		OrgType:      orgType,
-		RequestedAt:  time.Now().UTC().Format(time.RFC3339),
+		RequestedAt:  deterministicTimestamp(ctx),
 		Votes:        []Vote{},
 		Status:       admissionPending,
 	}
@@ -414,10 +482,10 @@ func (c *MisinformationContract) FinalizeOrgAdmission(
 		}
 	}
 	req.FinalizedBy = finalizerMSP
-	req.FinalizedAt = time.Now().UTC().Format(time.RFC3339)
+	req.FinalizedAt = deterministicTimestamp(ctx)
 	if accept >= quorum {
 		req.Status = admissionAdmitted
-		org := RegisteredOrg{MSPID: candidateMSP, RegisteredAt: time.Now().UTC().Format(time.RFC3339)}
+		org := RegisteredOrg{MSPID: candidateMSP, RegisteredAt: deterministicTimestamp(ctx)}
 		orgByte, err := json.Marshal(org)
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal org: %v", err)
@@ -618,7 +686,7 @@ func (c *MisinformationContract) FinalizeReport(
 	} else if expired {
 		record.Status = statusExpired
 		record.FinalizedBy = finalizerMSP
-		record.FinalizedAt = time.Now().UTC().Format(time.RFC3339)
+		record.FinalizedAt = deterministicTimestamp(ctx)
 		recordBytes, err = json.Marshal(record)
 		if err != nil {
 			return fmt.Errorf("failed to marshal record: %v", err)
@@ -646,7 +714,7 @@ func (c *MisinformationContract) FinalizeReport(
 		}
 	}
 	record.FinalizedBy = finalizerMSP
-	record.FinalizedAt = time.Now().UTC().Format(time.RFC3339)
+	record.FinalizedAt = deterministicTimestamp(ctx)
 	if accept >= quorum {
 		record.Status = statusFinal
 	} else {
@@ -707,7 +775,7 @@ func (c *MisinformationContract) ExpireReport(
 
 	record.Status = statusExpired
 	record.FinalizedBy = finalizerMSP
-	record.FinalizedAt = time.Now().UTC().Format(time.RFC3339)
+	record.FinalizedAt = deterministicTimestamp(ctx)
 	recordBytes, err = json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("failed to marshal record: %v", err)

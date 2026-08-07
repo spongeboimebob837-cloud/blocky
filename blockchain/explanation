@@ -20,7 +20,7 @@ dissertation's implementation chapter.
   peer CLI  (chaincode invoke / query)
        |
        v
-  2-org Hyperledger Fabric test-network (Raft, LevelDB)
+  3-org Hyperledger Fabric test-network (Raft, CouchDB)
        |
        v
   misinformation chaincode (Go, contractapi)  <-- B1-B3
@@ -91,7 +91,7 @@ This is the *only* part that runs inside the Fabric network.
   exported method automatically becomes a callable chaincode function.
 - `newReportKey` / `newOrgKey` / `newVoteKey` — build composite ledger keys.
 - `validateReportInput(...)` — rejects bad rows before anything is written.
-- **Consortium review lifecycle (v1.1):**
+- **Consortium review lifecycle (v2):**
   - `RegisterOrg` (invoke) — self-enrolls the calling org as a stakeholder.
     Idempotent; returns the MSPID.
   - `SubmitReport` (invoke) — creates a **PENDING** report. Only a registered
@@ -133,17 +133,38 @@ tested without a network.
 **`deploy.sh`** — one-command network bring-up + chaincode deployment (B4–B6).
 
 - Checks `jq` is available (the Fabric scripts need it).
-- `./scripts/deploy.sh` → `network.sh up` (starts 2-org Raft network) →
+- `./scripts/deploy.sh` → `network.sh up` (starts Raft network) →
   `createChannel` → `deployCC` (package → install on **both** orgs → approve on
-  **both** orgs → commit). Endorsement policy: `AND(Org1, Org2)`.
+  **both** orgs → commit) → `onboard-org3.sh`.
+- **Default topology is now 3 orgs** with a 2-of-3 endorsement policy
+  (`OutOf(2, Org1MSP, Org2MSP, Org3MSP)`), matching the chaincode's
+  `foundingOrgLimit = 3`. Pass `-2` for the 2-org baseline (`AND(Org1, Org2)`).
 - `./scripts/deploy.sh down` → tears the network down.
 
-**`onboard-org3.sh`** — robustness test: adds a 3rd stakeholder org.
+**`onboard-org3.sh`** — adds a 3rd stakeholder org (or regenerates it after a
+redeploy).
 
+- **Self-healing:** `network.sh up`/`down` wipe the whole `peerOrganizations`
+  dir, deleting org3's crypto. If the org3 TLS/MSP keys are missing this script
+  runs `addOrg3/addOrg3.sh up` first, so it works regardless of order.
 - Packages the chaincode, installs on all 3 peers, approves on all 3, and
   re-commits with **`OutOf(2, Org1MSP, Org2MSP, Org3MSP)`** — a 2-of-3
-  endorsement quorum. Requires `test-network/addOrg3/addOrg3.sh up` first.
+  endorsement quorum.
 - After this, the bridge/smoke-test use `org3` as an endorser and voter.
+
+**`register-orgs.sh`** — registers the orgs on-chain (genesis bootstrap).
+- `./scripts/register-orgs.sh` self-registers org1/org2/org3 via `RegisterOrg`
+  (or a subset, e.g. `./scripts/register-orgs.sh org1 org2`). Replaces the
+  manual Step 6.5 heredoc.
+
+**`bootstrap-keys.sh`** — mints the gateway's first API keys.
+- Writes `key-org1`/`key-org2`/`key-org3` straight into `offchain.db` (the
+  `/api/orgs/apply` endpoint needs an existing key — chicken-and-egg).
+  `./scripts/bootstrap-keys.sh -r` also registers the orgs on-chain.
+
+**`start-ipfs.sh`** — starts the off-chain storage node.
+- Runs a local `ipfs/kubo` Docker container (RPC `:5001`, gateway `:8080`).
+  `down` stops it. The API gateway falls back to SQLite if IPFS is unreachable.
 
 **`smoke-test.sh`** — CLI smoke test proving the deployed chaincode works (B5).
 
@@ -198,7 +219,7 @@ paths that existed and what they were, for the record:
 | `package.json` | balance-transfer npm manifest | No |
 | `artifacts/` | old fabcar Go source + docker-compose crypto | No |
 | `channel-artifacts/` | generated `mychannel.block` | No (generated) |
-| `explorer/` | Fabric Explorer (optional UI) | No |
+| `explorer/` | Fabric Explorer (optional UI; removed again in a later cleanup commit) | No |
 | `fabcar.tar.gz` | packaged fabcar chaincode | No |
 | `ScriptDetails.tx`, `details.tx`, `errors.tx` | terminal transcripts from setup | No |
 | `log.txt` | log output | No |
@@ -216,8 +237,9 @@ interaction is CLI (`scripts/`) or the Python bridge (`blockchain.py`).
 
 ## 4. End-to-end flow (concrete)
 
-1. **Deploy:** `blockchain/scripts/deploy.sh` starts the 2-org network and
-   commits the `misinformation` chaincode v1.1 on `mychannel`.
+1. **Deploy:** `blockchain/scripts/deploy.sh` starts the 3-org network and
+   commits the `misinformation` chaincode v2.1 on `mychannel` with a 2-of-3
+   endorsement policy (`-2` for the 2-org baseline).
 2. **Onboard:** each fact-checking org calls `RegisterOrg` (via CLI or bridge)
    and becomes a stakeholder. Quorum is computed from the on-chain org count.
 3. **Produce:** the AI pipeline (in `apps/ai_service/`) predicts, producing rows
@@ -253,6 +275,8 @@ Run the steps in order. Everything below assumes you are in the repo root
   (export on PATH if not already).
 - `jq` on PATH (the Fabric scripts need it; see `scripts/deploy.sh`).
 - Optional but recommended: a `Python 3.10+` env for the bridge.
+- Optional: an IPFS node for off-chain report storage (`scripts/start-ipfs.sh`);
+  the gateway degrades to SQLite when it's absent.
 
 ### Step 1 — Deploy the network and chaincode
 
@@ -261,10 +285,11 @@ cd blockchain
 ./scripts/deploy.sh
 ```
 
-This runs the full lifecycle: `network.sh up` (2-org Raft network) →
+This runs the full lifecycle: `network.sh up` (Raft network) →
 `createChannel` (mychannel) → `deployCC` (package → install on org1 **and**
-org2 → approve on both → commit). When it finishes, `misinformation` v1.1 is
-committed and the network is live.
+org2 → approve on both → commit) → `onboard-org3.sh` (org3 + 2-of-3 policy).
+When it finishes, `misinformation` v2.1 is committed and the network is live.
+For the 2-org baseline only: `./scripts/deploy.sh -2`.
 
 ### Step 2 — Verify the chaincode is committed (optional sanity check)
 
@@ -272,8 +297,8 @@ committed and the network is live.
 ./scripts/smoke-test.sh
 ```
 
-This runs the whole consortium review flow end-to-end via the CLI: register both
-orgs, submit a report, both orgs vote, finalize, then queries. See §4 for what
+This runs the whole consortium review flow end-to-end via the CLI: register all
+orgs, submit a report, all orgs vote, finalize, then queries. See §4 for what
 each step does. This is the CLI-only equivalent of the old REST API (B5).
 
 ### Step 3 — Unit-test the chaincode logic (no network needed)
@@ -306,13 +331,20 @@ rows = [
 ### Step 5 — Onboard the stakeholder orgs
 
 The network must still be up from Step 1. Each fact-checking org enrolls
-on-chain. Run once per org (different terminal envs or swap `org=`):
+on-chain (the chaincode allows the first `foundingOrgLimit` = 3 orgs to
+self-register). One command:
 
-```python
-from blockchain import FabricBridge
-FabricBridge(org="org1").register_org()
-FabricBridge(org="org2").register_org()
-print("registered:", FabricBridge(org="org1").list_orgs())
+```bash
+cd blockchain
+./scripts/register-orgs.sh          # registers org1, org2, org3
+```
+
+Or via the reusable Python CLI (same function, different face):
+
+```bash
+cd apps/ai_service/v1-0-0/app/src
+python3 -m blockchain register-all
+python3 -m blockchain list-orgs
 ```
 
 ### Step 6 — Submit reports for review
@@ -340,7 +372,7 @@ never leaves the machine.
 ### Step 7 — Vote and finalize
 
 Every registered org votes (one vote each), then any org finalizes once quorum
-is met. With 2 registered orgs, quorum = 2:
+is met. With 3 registered orgs, quorum = ceil(2×3/3) = 2:
 
 ```python
 from blockchain import FabricBridge
@@ -349,7 +381,7 @@ FabricBridge(org="org1").cast_vote("nso", "1", "accept")
 FabricBridge(org="org2").cast_vote("nso", "1", "accept")
 print("votes:", FabricBridge(org="org1").votes("nso", "1"))
 
-# quorum reached (2/2) -> report 1 becomes FINAL
+# quorum reached (2/3) -> report 1 becomes FINAL
 FabricBridge(org="org1").finalize_report("nso", "1")
 print("report 1:", FabricBridge(org="org1").query_report("nso", "1"))
 ```
@@ -404,10 +436,20 @@ Rerun Step 1 to bring it all back.
   ```bash
   ./scripts/deploy.sh down
   docker volume rm compose_orderer.example.com \
-    compose_peer0.org1.example.com compose_peer0.org2.example.com
+    compose_peer0.org1.example.com compose_peer0.org2.example.com \
+    compose_peer0.org3.example.com
   ./scripts/deploy.sh
   ```
   (or `docker volume prune` for all unused volumes).
+- **`onboard-org3.sh` fails with missing org3 TLS/MSP keys** → a `network.sh
+  up`/`down` wiped org3's crypto. The script now detects this and runs
+  `addOrg3/addOrg3.sh up` itself; re-run `./scripts/onboard-org3.sh`.
+- **API key bootstrap** → mint the first keys with
+  `./scripts/bootstrap-keys.sh` (writes into the same `offchain.db` the server
+  opens); `-r` also registers the orgs on the ledger.
+- **Off-chain storage** → `GET /api/status` reports whether IPFS or the SQLite
+  fallback is active. Start IPFS with `./scripts/start-ipfs.sh`; reports added
+  while it's down stay in SQLite (still verifiable via `/verify`).
 - **`jq: command not found`** → install jq (e.g. jq-linux-amd64 to
   `~/.local/bin/jq`); `deploy.sh` picks it up automatically.
 
@@ -431,7 +473,7 @@ implementation removes it.
 | 4 | **`--init-required` + manual `initLedger`**: the tutorial's chaincode needed an extra init step before it was usable, and `initLedger` could be invoked twice (double-initialised state). | `misinformation` needs **no init** ("Chaincode initialization is not required"); the ledger starts empty and is append-only from the first submit. |
 | 5 | **Orderer not ready during channel create**: `ScriptDetails.tx` shows `readBlock -> Expect block, but got status: &{NOT_FOUND}` then repeated `&{SERVICE_UNAVAILABLE}` retries (orderer still starting). | `deploy.sh` runs the network's own retry logic; and this failure class is eliminated because we never hand-create channels — `network.sh createChannel` does it. |
 | 6 | **Both-org approval / endorsement required** but manual: tutorial scripts only approved on one org first (transcripts show `"Org2MSP": false` in `checkcommitreadiness`), causing `commit` to fail or half-commit. | `deploy.sh` deploys through `deployCC` which installs/approves on **both** orgs, and the smoke test / bridge always invoke with `--peerAddresses` for both orgs + `--waitForEvent`. |
-| 7 | **Stale Docker volumes**: network restart fails with `ledger [mychannel] already exists with state [ACTIVE]` and `peer channel join` retry loops (`res=1` x5) — hit in this project too. | Documented in Troubleshooting (§5): `deploy.sh down` + delete the 3 `compose_*` volumes, redeploy. |
+| 7 | **Stale Docker volumes**: network restart fails with `ledger [mychannel] already exists with state [ACTIVE]` and `peer channel join` retry loops (`res=1` x5) — hit in this project too. | Documented in Troubleshooting (§5): `deploy.sh down` + delete the `compose_*` volumes (4 with a 3-org network), redeploy. |
 | 8 | **Manually maintained channel artifacts**: `channel-artifacts/mychannel.block`, `mychannel.tx`, anchor-peer tx files, `system-genesis-block` — tracked/left lying around, easily stale. | Generated on demand by `network.sh`, ignored by git, deleted in cleanup. |
 | 9 | **fabcar chaincode had no provenance**: no knowledge of who submitted a transaction. | `submitted_by` and every vote's `voter_msp`/`txid` are read from transaction identities. |
 | 10 | **No integrity check between app and ledger** — the tutorial trusted whatever the client sent. | Raw text is SHA-256 hashed in the bridge and compared against the chaincode's `ComputeContentHash` (verified equal in live tests); raw text never reaches the network. |
