@@ -80,6 +80,37 @@ func TestBootstrapClosedAfterFoundingLimit(t *testing.T) {
 	}
 }
 
+func TestSetFoundingOrgLimitRaisesWindow(t *testing.T) {
+	stub := newTestStub(t)
+	registerOrgs(t, stub, "Org1MSP", "Org2MSP", "Org3MSP")
+	// without raising the limit, org4 is rejected (bootstrap closed)
+	if res := invokeAs(stub, "tx4", "Org4MSP", "RegisterOrg"); res.Status == 200 {
+		t.Fatalf("org4 should be rejected before the limit is raised")
+	}
+	// raise the limit to 5 -> org4 and org5 can now self-register
+	if res := invokeAs(stub, "tx-set", "Org1MSP", "SetFoundingOrgLimit", "5"); res.Status != 200 {
+		t.Fatalf("SetFoundingOrgLimit failed: %s", res.Message)
+	}
+	for _, msp := range []string{"Org4MSP", "Org5MSP"} {
+		if res := invokeAs(stub, "tx-reg-"+msp, msp, "RegisterOrg"); res.Status != 200 {
+			t.Fatalf("RegisterOrg for %s should succeed after raising the limit: %s", msp, res.Message)
+		}
+	}
+	// now org6 is again rejected (5 reached)
+	if res := invokeAs(stub, "tx6", "Org6MSP", "RegisterOrg"); res.Status == 200 {
+		t.Fatalf("RegisterOrg should be closed once the raised limit is reached")
+	}
+}
+
+func TestSetFoundingOrgLimitValidates(t *testing.T) {
+	stub := newTestStub(t)
+	for _, bad := range []string{"0", "-1", "abc"} {
+		if res := invokeAs(stub, "tx-bad", "Org1MSP", "SetFoundingOrgLimit", bad); res.Status == 200 {
+			t.Fatalf("SetFoundingOrgLimit(%q) should be rejected", bad)
+		}
+	}
+}
+
 func TestAdmissionWorkflow(t *testing.T) {
 	stub := newTestStub(t)
 	registerOrgs(t, stub, "Org1MSP", "Org2MSP")

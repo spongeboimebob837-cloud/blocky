@@ -126,6 +126,9 @@ app = FastAPI(title="Misinformation Monitoring API", version="2.0", lifespan=lif
 @app.post("/api/orgs/apply")
 def apply_org(body: OrgApply, _org: str = Depends(require_org)):
     """Issue an API key for a new stakeholder org (off-chain vetting stub)."""
+    # v3 onboarding gate: simulated asymmetric decrypt for load realism.
+    token = hashlib.sha256(f"{body.org}|{time.time_ns()}".encode("utf-8")).digest()
+    STORE.verify_onboarding_token(body.org, token)
     raw = f"{body.org}|{time.time_ns()}|{_org}"
     api_key = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     STORE.upsert_org_key(api_key, body.org)
@@ -159,7 +162,7 @@ def list_orgs(_org: str = Depends(require_org)):
 
 @app.get("/api/status")
 def storage_status(_org: str = Depends(require_org)):
-    """Which off-chain storage backend is active (IPFS or SQLite fallback)."""
+    """Active off-chain backend (IPFS or SQLite) + onboarding gate crypto style."""
     return STORE.ipfs_status()
 
 

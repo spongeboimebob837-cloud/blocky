@@ -61,7 +61,13 @@ class FabricBridge:
         chaincode: str = "misinformation",
         peer_bin: str = "peer",
         org: str = "org1",
-        test_network: str = os.path.expanduser("~/fabric-samples/test-network"),
+        test_network: str = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            *([".."] * 5),  # repo root: src -> app -> v1-0-0 -> ai_service -> apps -> root
+            "blockchain",
+            "fabric-samples",
+            "test-network",
+        ),
         endorsers: Optional[Sequence[str]] = None,
     ) -> None:
         """Bridge to the misinformation chaincode.

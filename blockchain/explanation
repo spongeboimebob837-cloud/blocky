@@ -227,7 +227,7 @@ paths that existed and what they were, for the record:
 
 The **MSP/TLS crypto material and channel artifacts** are *not* missing — they are
 runtime build artifacts generated on demand by `network.sh up` / `createChannel`
-inside `~/fabric-samples/test-network/organizations/` and `channel-artifacts/`,
+inside `blockchain/fabric-samples/test-network/organizations/` and `channel-artifacts/`,
 and are (correctly) never committed. The Python bridge reads them by path.
 
 Per the plan (B5), the REST API layer is deliberately **deferred**; all real
@@ -271,7 +271,7 @@ Run the steps in order. Everything below assumes you are in the repo root
 
 - Docker running (tested with Docker 29.x on Linux/WSL2).
 - Go 1.22+ (`go version`).
-- `peer` / `configtxgen` / `cryptogen` binaries from `~/fabric-samples/bin`
+- `peer` / `configtxgen` / `cryptogen` binaries from `blockchain/fabric-samples/bin`
   (export on PATH if not already).
 - `jq` on PATH (the Fabric scripts need it; see `scripts/deploy.sh`).
 - Optional but recommended: a `Python 3.10+` env for the bridge.

@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CHAINCODE_PATH="${PROJECT_ROOT}/chaincode/misinformation/go"
-TEST_NETWORK="${FABRIC_SAMPLES:-${HOME}/fabric-samples}/test-network"
+TEST_NETWORK="${FABRIC_SAMPLES:-${PROJECT_ROOT}/fabric-samples}/test-network"
 ADD_ORG3="${TEST_NETWORK}/addOrg3"
 
 CC_NAME="misinformation"

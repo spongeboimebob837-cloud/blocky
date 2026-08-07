@@ -14,10 +14,17 @@ Storage backend is pluggable:
   testable without a running IPFS node.
 
 `org_keys` (API key -> org) always lives in SQLite.
+
+The **onboarding token gate** (`CryptoGate`) simulates an asymmetric decrypt per
+request, with the algorithm chosen by `CRYPTO_STYLE` (ecdsa | ed25519 | rsa) — a
+v3 load-shaping shim so server CPU cost under stress is realistic. Fabric's real
+X.509 verification still happens on-chain for every transaction; this is only the
+app-layer per-request cost.
 """
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 import time
@@ -29,6 +36,78 @@ from typing import Any, Dict, List, Optional, Union
 
 class StorageError(Exception):
     pass
+
+
+class CryptoGate:
+    """Simulated app-layer asymmetric decrypt (v3, load-shaping shim).
+
+    Every style performs a real cryptographic operation on a throwaway keypair
+    and always accepts (pass/fail is fixed — the *cost* is the point). Selectable
+    via the `CRYPTO_STYLE` env var:
+
+    - `ecdsa`    ECDSA P-256 sign + verify (Fabric's default curve).
+    - `ed25519`  Ed25519 sign + verify (fastest of the three).
+    - `rsa`      RSA-2048 encrypt + decrypt (heaviest CPU; legacy-style tokens).
+
+    Not a real MSP change: Fabric still verifies genuine X.509 certificates for
+    every transaction on-chain. This only shapes the server-side per-request load.
+    """
+
+    STYLES = ("ecdsa", "ed25519", "rsa")
+
+    def __init__(self, style: Optional[str] = None) -> None:
+        self.style = (style or os.environ.get("CRYPTO_STYLE", "ecdsa")).lower()
+        if self.style not in self.STYLES:
+            raise StorageError(
+                f"CRYPTO_STYLE must be one of {self.STYLES}, got '{self.style}'"
+            )
+        self._keypair = self._generate()
+        self._last_ms: float = 0.0
+
+    def _generate(self) -> Any:
+        from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+
+        if self.style == "ecdsa":
+            private = ec.generate_private_key(ec.SECP256R1())
+        elif self.style == "ed25519":
+            private = ed25519.Ed25519PrivateKey.generate()
+        else:  # rsa
+            private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        return private
+
+    def verify_token(self, token: bytes) -> bool:
+        """Performs the style's cryptographic op on a throwaway token; always True.
+
+        Mirrors the *shape* of a real identity-token decrypt: rsa does an
+        encrypt/decrypt round-trip, the EC styles do sign/verify round-trips.
+        """
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding
+
+        start = time.perf_counter()
+        try:
+            if self.style == "rsa":
+                ciphertext = self._keypair.public_key().encrypt(
+                    token, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+                )
+                self._keypair.decrypt(
+                    ciphertext, padding.OAEP(mgf=padding.MGF1(hashes.SHA256()), algorithm=hashes.SHA256(), label=None)
+                )
+            elif self.style == "ed25519":
+                signature = self._keypair.sign(token)
+                self._keypair.public_key().verify(signature, token)
+            else:  # ecdsa
+                signature = self._keypair.sign(token, ec.ECDSA(hashes.SHA256()))
+                self._keypair.public_key().verify(signature, token, ec.ECDSA(hashes.SHA256()))
+        except InvalidSignature:
+            return False
+        finally:
+            self._last_ms = (time.perf_counter() - start) * 1000.0
+        return True
+
+    def status(self) -> Dict[str, Any]:
+        return {"crypto_style": self.style, "crypto_verify_ms": round(self._last_ms, 3)}
 
 
 class IpfsStore:
@@ -97,6 +176,7 @@ class OffChainStore:
         self,
         db_path: str = "offchain.db",
         ipfs: Optional[Union[str, IpfsStore]] = None,
+        crypto_style: Optional[str] = None,
     ) -> None:
         parent = os.path.dirname(os.path.abspath(db_path))
         Path(parent).mkdir(parents=True, exist_ok=True)
@@ -108,6 +188,7 @@ class OffChainStore:
             ipfs = IpfsStore()
         self._ipfs = ipfs if isinstance(ipfs, IpfsStore) else IpfsStore(ipfs)
         self._ipfs_ok = self._ipfs.is_available()
+        self._gate = CryptoGate(crypto_style)
 
     def _init(self) -> None:
         with self._conn:
@@ -145,7 +226,21 @@ class OffChainStore:
         return self._ipfs_ok
 
     def ipfs_status(self) -> Dict[str, Any]:
-        return {"ipfs_available": self._ipfs_ok, "backend": "ipfs" if self._ipfs_ok else "sqlite"}
+        status = {
+            "ipfs_available": self._ipfs_ok,
+            "backend": "ipfs" if self._ipfs_ok else "sqlite",
+        }
+        status.update(self._gate.status())
+        return status
+
+    # ---- onboarding token gate ---------------------------------------------
+    def verify_onboarding_token(self, org: str, token: bytes) -> bool:
+        """Simulated app-layer decrypt on the onboarding gate (v3 load shim).
+
+        Always accepts; runs the CRYPTO_STYLE operation so per-request CPU cost
+        is realistic. Timings surfaced via `/api/status` (`crypto_verify_ms`).
+        """
+        return self._gate.verify_token(token)
 
     # ---- org keys ----------------------------------------------------------
     def upsert_org_key(self, api_key: str, org: str) -> None:

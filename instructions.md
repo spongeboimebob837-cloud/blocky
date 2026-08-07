@@ -51,7 +51,7 @@ There are THREE layers:
 ```
 Repo root /
   README.md                         - just the project title
-  updates                           - design decision log (v1 -> v2).
+  updates.md                        - design decision log (v1 -> v2 -> v3).
                                       NOTE: some code examples in it are
                                       OUTDATED (old function signatures).
   instructions.md                   - this file
@@ -89,8 +89,8 @@ Repo root /
 A Python virtualenv is already set up at the repo root:
 `venv_A_Blockchain_Enabled_Framework_for_Misinformation_Monitoring/`
 
-Fabric tooling lives OUTSIDE the repo at `~/fabric-samples` (already installed:
-Go 1.22, Docker 29, jq, peer CLI, Python 3.12 all present).
+Fabric tooling lives INSIDE the repo at `blockchain/fabric-samples` (already
+installed: Go 1.22, Docker 29, jq, peer CLI, Python 3.12 all present).
 
 ## 4. First, a 60-Second Sanity Check (no network needed)
 
